@@ -15,10 +15,12 @@ import torch
 import torch.nn.functional as F
 
 try:
+    from .agents import HeuristicAgent, RandomAgent
     from .env import SuperTicTacToeEnv
     from .torch_models import TorchDQN, masked_q_argmax, resolve_torch_device
     from .utils import project_root, random_legal_action, set_global_seeds
 except ImportError:  # pragma: no cover
+    from agents import HeuristicAgent, RandomAgent
     from env import SuperTicTacToeEnv
     from torch_models import TorchDQN, masked_q_argmax, resolve_torch_device
     from utils import project_root, random_legal_action, set_global_seeds
@@ -51,6 +53,54 @@ def append_csv_row(path: str, row: Dict[str, object]) -> None:
         if not exists:
             writer.writeheader()
         writer.writerow(row)
+
+
+def choose_agent_player(mode: str, episode_index: int, rng: np.random.Generator) -> int:
+    if mode == "x":
+        return 1
+    if mode == "o":
+        return -1
+    if mode == "random":
+        return int(rng.choice([1, -1]))
+    return 1 if episode_index % 2 == 0 else -1
+
+
+def choose_opponent(args: argparse.Namespace, rng: np.random.Generator) -> str:
+    if args.opponent != "mixed":
+        return args.opponent
+    labels = np.asarray(["self", "heuristic", "random"], dtype=object)
+    probs = np.asarray(
+        [args.mixed_self_prob, args.mixed_heuristic_prob, args.mixed_random_prob],
+        dtype=np.float64,
+    )
+    probs = probs / max(float(np.sum(probs)), 1.0e-12)
+    return str(rng.choice(labels, p=probs))
+
+
+def select_learning_action(
+    online: TorchDQN,
+    obs: np.ndarray,
+    mask: np.ndarray,
+    epsilon: float,
+    rng: np.random.Generator,
+    device: torch.device,
+) -> int:
+    if rng.random() < epsilon:
+        return random_legal_action(mask, rng)
+    return masked_q_argmax(online, obs, mask, device)
+
+
+def select_opponent_action(
+    env: SuperTicTacToeEnv,
+    opponent: str,
+    random_agent: RandomAgent,
+    heuristic_agent: HeuristicAgent,
+) -> int:
+    if opponent == "heuristic":
+        return heuristic_agent.select_action(env)
+    if opponent == "random":
+        return random_agent.select_action(env)
+    raise ValueError(f"Unknown non-self opponent mode: {opponent}")
 
 
 def save_checkpoint(
@@ -126,6 +176,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eps-start", type=float, default=1.0)
     parser.add_argument("--eps-end", type=float, default=0.05)
     parser.add_argument("--eps-decay-frac", type=float, default=0.7)
+    parser.add_argument(
+        "--opponent",
+        type=str,
+        default="self",
+        choices=["self", "random", "heuristic", "mixed"],
+    )
+    parser.add_argument(
+        "--agent-player-mode",
+        type=str,
+        default="alternate",
+        choices=["alternate", "random", "x", "o"],
+    )
+    parser.add_argument("--mixed-self-prob", type=float, default=0.5)
+    parser.add_argument("--mixed-heuristic-prob", type=float, default=0.4)
+    parser.add_argument("--mixed-random-prob", type=float, default=0.1)
     parser.add_argument("--save-path", type=str, default=str(root / "models" / "dqn_agent_torch.pt"))
     parser.add_argument("--log-csv", type=str, default=str(root / "models" / "dqn_torch_log.csv"))
     parser.add_argument("--save-interval", type=int, default=5000)
@@ -167,11 +232,15 @@ def main() -> None:
 
     replay = ReplayBuffer(args.replay_size, args.seed)
     env = SuperTicTacToeEnv(seed=args.seed)
+    random_agent = RandomAgent(seed=args.seed + 17)
+    heuristic_agent = HeuristicAgent(seed=args.seed + 29)
     started_at = time.time()
 
     for episode in range(start_episode, args.episodes):
         frac = min(1.0, episode / max(args.episodes * args.eps_decay_frac, 1.0))
         epsilon = args.eps_start + frac * (args.eps_end - args.eps_start)
+        opponent = choose_opponent(args, rng)
+        agent_player = choose_agent_player(args.agent_player_mode, episode, rng)
         obs, _ = env.reset(seed=int(rng.integers(0, 2**31 - 1)))
         done = False
         steps = 0
@@ -180,23 +249,65 @@ def main() -> None:
         losses: List[float] = []
 
         while not done:
+            if opponent != "self" and env.current_player != agent_player:
+                action = select_opponent_action(env, opponent, random_agent, heuristic_agent)
+                obs, _, terminated, truncated, last_info = env.step(action)
+                done = bool(terminated or truncated)
+                forfeits += int(bool(last_info.get("forfeited", False)))
+                steps += 1
+                continue
+
             mask = env.legal_action_mask()
-            if rng.random() < epsilon:
-                action = random_legal_action(mask, rng)
-            else:
-                action = masked_q_argmax(online, obs, mask, device)
+            action = select_learning_action(online, obs, mask, epsilon, rng, device)
 
             next_obs, reward, terminated, truncated, last_info = env.step(action)
             done = bool(terminated or truncated)
-            next_mask = env.legal_action_mask()
-            replay.add((obs, action, float(reward), next_obs, done, next_mask))
-            obs = next_obs
             forfeits += int(bool(last_info.get("forfeited", False)))
             steps += 1
+            transition_reward = float(reward)
+            replay_next_obs = next_obs
+            replay_done = done
+            next_value_sign = -1.0
+
+            if opponent != "self":
+                next_value_sign = 1.0
+                if not done:
+                    opponent_action = select_opponent_action(
+                        env, opponent, random_agent, heuristic_agent
+                    )
+                    replay_next_obs, _, terminated, truncated, last_info = env.step(
+                        opponent_action
+                    )
+                    replay_done = bool(terminated or truncated)
+                    done = replay_done
+                    forfeits += int(bool(last_info.get("forfeited", False)))
+                    steps += 1
+                    if replay_done:
+                        winner = int(last_info.get("winner", 0))
+                        if winner == agent_player:
+                            transition_reward = 1.0
+                        elif winner == -agent_player:
+                            transition_reward = -1.0
+                        else:
+                            transition_reward = 0.0
+
+            next_mask = env.legal_action_mask()
+            replay.add(
+                (
+                    obs,
+                    action,
+                    transition_reward,
+                    replay_next_obs,
+                    replay_done,
+                    next_mask,
+                    next_value_sign,
+                )
+            )
+            obs = replay_next_obs
 
             if len(replay) >= max(args.warmup_steps, args.batch_size):
                 batch = replay.sample(args.batch_size)
-                b_obs, b_action, b_reward, b_next_obs, b_done, b_next_mask = map(
+                b_obs, b_action, b_reward, b_next_obs, b_done, b_next_mask, b_next_sign = map(
                     np.asarray, zip(*batch)
                 )
                 obs_t = torch.as_tensor(b_obs, dtype=torch.float32, device=device)
@@ -205,11 +316,15 @@ def main() -> None:
                 next_obs_t = torch.as_tensor(b_next_obs, dtype=torch.float32, device=device)
                 done_t = torch.as_tensor(b_done.astype(np.float32), dtype=torch.float32, device=device)
                 next_mask_t = torch.as_tensor(b_next_mask.astype(bool), dtype=torch.bool, device=device)
+                next_sign_t = torch.as_tensor(
+                    b_next_sign.astype(np.float32), dtype=torch.float32, device=device
+                )
 
                 with torch.no_grad():
                     next_q = target(next_obs_t).masked_fill(~next_mask_t, -1.0e9)
-                    # The next state belongs to the opponent, so its value is negated.
-                    target_q = reward_t + (1.0 - done_t) * (-args.gamma * next_q.max(dim=1).values)
+                    target_q = reward_t + (
+                        1.0 - done_t
+                    ) * args.gamma * next_sign_t * next_q.max(dim=1).values
 
                 q_values = online(obs_t)
                 q_action = q_values.gather(1, action_t[:, None]).squeeze(1)
@@ -231,8 +346,10 @@ def main() -> None:
                 "winner": int(last_info["winner"]),
                 "steps": steps,
                 "forfeits": forfeits,
-                "epsilon": epsilon,
-                "replay_size": len(replay),
+                    "epsilon": epsilon,
+                    "opponent": opponent,
+                    "agent_player": agent_player,
+                    "replay_size": len(replay),
                 "loss": float(np.mean(losses)) if losses else np.nan,
                 "device": str(device),
                 "elapsed_seconds": time.time() - started_at,
@@ -241,6 +358,7 @@ def main() -> None:
             print(
                 f"episodes={episode_num} device={device} winner={last_info['winner']} "
                 f"steps={steps} replay={len(replay)} epsilon={epsilon:.3f} "
+                f"opponent={opponent} "
                 f"loss={row['loss']:.4f}"
             )
         if episode_num % args.save_interval == 0 or episode_num >= args.episodes:

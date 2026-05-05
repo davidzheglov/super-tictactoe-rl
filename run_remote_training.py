@@ -195,6 +195,21 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
     dqn_script = "train_torch_dqn.py" if use_torch else "train_dqn.py"
     ppo_save_name = "super_ttt_agent_torch.pt" if use_torch else "super_ttt_agent.pt"
     dqn_save_name = "dqn_agent_torch.pt" if use_torch else "dqn_agent.pt"
+    ppo_opponent_args = []
+    dqn_opponent_args = []
+    if use_torch:
+        common_opponent_args = [
+            "--agent-player-mode",
+            args.agent_player_mode,
+            "--mixed-self-prob",
+            str(args.mixed_self_prob),
+            "--mixed-heuristic-prob",
+            str(args.mixed_heuristic_prob),
+            "--mixed-random-prob",
+            str(args.mixed_random_prob),
+        ]
+        ppo_opponent_args = ["--opponent", args.ppo_opponent, *common_opponent_args]
+        dqn_opponent_args = ["--opponent", args.dqn_opponent, *common_opponent_args]
 
     return [
         Job(
@@ -215,6 +230,7 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 str(args.ppo_minibatch_size),
                 "--lr",
                 str(args.ppo_lr),
+                *ppo_opponent_args,
                 "--device",
                 args.neural_device,
                 "--seed",
@@ -247,6 +263,7 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 str(args.dqn_batch_size),
                 "--lr",
                 str(args.dqn_lr),
+                *dqn_opponent_args,
                 "--device",
                 args.neural_device,
                 "--seed",
@@ -335,9 +352,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ppo-update-epochs", type=int, default=4)
     parser.add_argument("--ppo-minibatch-size", type=int, default=1024)
     parser.add_argument("--ppo-lr", type=float, default=2.0e-4)
+    parser.add_argument(
+        "--ppo-opponent",
+        type=str,
+        default="mixed",
+        choices=["self", "random", "heuristic", "mixed"],
+    )
     parser.add_argument("--dqn-episodes", type=int, default=150000)
     parser.add_argument("--dqn-batch-size", type=int, default=512)
     parser.add_argument("--dqn-lr", type=float, default=3.0e-4)
+    parser.add_argument(
+        "--dqn-opponent",
+        type=str,
+        default="mixed",
+        choices=["self", "random", "heuristic", "mixed"],
+    )
+    parser.add_argument(
+        "--agent-player-mode",
+        type=str,
+        default="alternate",
+        choices=["alternate", "random", "x", "o"],
+    )
+    parser.add_argument("--mixed-self-prob", type=float, default=0.5)
+    parser.add_argument("--mixed-heuristic-prob", type=float, default=0.4)
+    parser.add_argument("--mixed-random-prob", type=float, default=0.1)
     parser.add_argument("--q-episodes", type=int, default=75000)
     return parser.parse_args()
 

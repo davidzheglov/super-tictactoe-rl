@@ -15,10 +15,12 @@ import torch
 from torch.distributions import Categorical
 
 try:
+    from .agents import HeuristicAgent, RandomAgent
     from .env import SuperTicTacToeEnv
     from .torch_models import TorchPolicyValueNet, mask_logits, resolve_torch_device, select_action_torch
     from .utils import hidden_sizes_from_arg, project_root, set_global_seeds
 except ImportError:  # pragma: no cover
+    from agents import HeuristicAgent, RandomAgent
     from env import SuperTicTacToeEnv
     from torch_models import TorchPolicyValueNet, mask_logits, resolve_torch_device, select_action_torch
     from utils import hidden_sizes_from_arg, project_root, set_global_seeds
@@ -52,6 +54,10 @@ def run_episode(
     device: torch.device,
     gamma: float,
     rng: np.random.Generator,
+    opponent: str = "self",
+    agent_player: int = 1,
+    random_agent: Optional[RandomAgent] = None,
+    heuristic_agent: Optional[HeuristicAgent] = None,
 ) -> Tuple[List[Transition], Dict[str, int]]:
     obs, _ = env.reset(seed=int(rng.integers(0, 2**31 - 1)))
     transitions: List[Transition] = []
@@ -59,29 +65,44 @@ def run_episode(
     winner = 0
     forfeits = 0
     illegal = 0
+    steps = 0
 
     while not done:
         player = env.current_player
+        policy_turn = opponent == "self" or player == agent_player
         action_mask = env.legal_action_mask()
-        action, log_prob, value = select_action_torch(
-            model, obs, action_mask, device=device, deterministic=False
-        )
+        if policy_turn:
+            action, log_prob, value = select_action_torch(
+                model, obs, action_mask, device=device, deterministic=False
+            )
+        elif opponent == "heuristic":
+            action = (heuristic_agent or HeuristicAgent()).select_action(env)
+            log_prob = 0.0
+            value = 0.0
+        elif opponent == "random":
+            action = (random_agent or RandomAgent()).select_action(env)
+            log_prob = 0.0
+            value = 0.0
+        else:
+            raise ValueError(f"Unknown opponent mode: {opponent}")
         next_obs, _, terminated, truncated, info = env.step(action)
         done = bool(terminated or truncated)
         winner = int(info["winner"])
         forfeits += int(bool(info["forfeited"]))
         illegal += int(info["reason"] == "illegal_action")
-        transitions.append(
-            Transition(
-                obs=obs,
-                action=action,
-                log_prob=log_prob,
-                reward=0.0,
-                value=value,
-                action_mask=action_mask.astype(np.float32),
-                player=player,
+        steps += 1
+        if policy_turn:
+            transitions.append(
+                Transition(
+                    obs=obs,
+                    action=action,
+                    log_prob=log_prob,
+                    reward=0.0,
+                    value=value,
+                    action_mask=action_mask.astype(np.float32),
+                    player=player,
+                )
             )
-        )
         obs = next_obs
 
     rewards = outcome_rewards(transitions, winner, gamma)
@@ -90,10 +111,36 @@ def run_episode(
 
     return transitions, {
         "winner": winner,
-        "length": len(transitions),
+        "length": steps,
+        "policy_steps": len(transitions),
         "forfeits": forfeits,
         "illegal": illegal,
+        "opponent_self": int(opponent == "self"),
+        "opponent_heuristic": int(opponent == "heuristic"),
+        "opponent_random": int(opponent == "random"),
     }
+
+
+def choose_agent_player(mode: str, episode_index: int, rng: np.random.Generator) -> int:
+    if mode == "x":
+        return 1
+    if mode == "o":
+        return -1
+    if mode == "random":
+        return int(rng.choice([1, -1]))
+    return 1 if episode_index % 2 == 0 else -1
+
+
+def choose_opponent(args: argparse.Namespace, rng: np.random.Generator) -> str:
+    if args.opponent != "mixed":
+        return args.opponent
+    labels = np.asarray(["self", "heuristic", "random"], dtype=object)
+    probs = np.asarray(
+        [args.mixed_self_prob, args.mixed_heuristic_prob, args.mixed_random_prob],
+        dtype=np.float64,
+    )
+    probs = probs / max(float(np.sum(probs)), 1.0e-12)
+    return str(rng.choice(labels, p=probs))
 
 
 def batch_from_episodes(episodes: List[List[Transition]]) -> Dict[str, np.ndarray]:
@@ -243,6 +290,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clip-ratio", type=float, default=0.2)
     parser.add_argument("--value-coef", type=float, default=0.5)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
+    parser.add_argument(
+        "--opponent",
+        type=str,
+        default="self",
+        choices=["self", "random", "heuristic", "mixed"],
+    )
+    parser.add_argument(
+        "--agent-player-mode",
+        type=str,
+        default="alternate",
+        choices=["alternate", "random", "x", "o"],
+    )
+    parser.add_argument("--mixed-self-prob", type=float, default=0.5)
+    parser.add_argument("--mixed-heuristic-prob", type=float, default=0.4)
+    parser.add_argument("--mixed-random-prob", type=float, default=0.1)
     parser.add_argument("--log-interval", type=int, default=1000)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--save-interval", type=int, default=5000)
@@ -279,13 +341,28 @@ def main() -> None:
         return
 
     env = SuperTicTacToeEnv(seed=args.seed)
+    random_agent = RandomAgent(seed=args.seed + 17)
+    heuristic_agent = HeuristicAgent(seed=args.seed + 29)
     started_at = time.time()
     while total_episodes < args.episodes:
         episodes_to_collect = min(args.batch_episodes, args.episodes - total_episodes)
         collected: List[List[Transition]] = []
         stats = []
-        for _ in range(episodes_to_collect):
-            episode, episode_stats = run_episode(env, model, device, args.gamma, rng)
+        for local_episode in range(episodes_to_collect):
+            episode_index = total_episodes + local_episode
+            opponent = choose_opponent(args, rng)
+            agent_player = choose_agent_player(args.agent_player_mode, episode_index, rng)
+            episode, episode_stats = run_episode(
+                env,
+                model,
+                device,
+                args.gamma,
+                rng,
+                opponent=opponent,
+                agent_player=agent_player,
+                random_agent=random_agent,
+                heuristic_agent=heuristic_agent,
+            )
             collected.append(episode)
             stats.append(episode_stats)
 
@@ -314,7 +391,13 @@ def main() -> None:
                 "o_wins": winners.count(-1),
                 "draws": winners.count(0),
                 "avg_length": float(np.mean([item["length"] for item in stats])),
+                "avg_policy_steps": float(
+                    np.mean([item["policy_steps"] for item in stats])
+                ),
                 "avg_forfeits": float(np.mean([item["forfeits"] for item in stats])),
+                "self_games": int(sum(item["opponent_self"] for item in stats)),
+                "heuristic_games": int(sum(item["opponent_heuristic"] for item in stats)),
+                "random_games": int(sum(item["opponent_random"] for item in stats)),
                 "loss": losses["loss"],
                 "policy_loss": losses["policy_loss"],
                 "value_loss": losses["value_loss"],
@@ -327,6 +410,9 @@ def main() -> None:
                 f"episodes={total_episodes} device={device} "
                 f"x_wins={winners.count(1)} o_wins={winners.count(-1)} "
                 f"draws={winners.count(0)} avg_len={row['avg_length']:.1f} "
+                f"policy_steps={row['avg_policy_steps']:.1f} "
+                f"opp_self={row['self_games']} opp_heur={row['heuristic_games']} "
+                f"opp_rand={row['random_games']} "
                 f"loss={losses['loss']:.4f} entropy={losses['entropy']:.4f}"
             )
 

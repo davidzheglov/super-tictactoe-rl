@@ -69,12 +69,24 @@ python tests.py
 
 ## Train
 
-The recommended trainers are PyTorch PPO self-play and PyTorch DQN. Both use
-legal-action masking and save resumable `.pt` checkpoints.
+The recommended trainers are PyTorch PPO and PyTorch DQN. Both use legal-action
+masking and save resumable `.pt` checkpoints. The one-command remote runner
+uses mixed opponent training by default:
+
+- 50% self-play
+- 40% heuristic opponent
+- 10% random opponent
 
 ```bash
 python train_torch_ppo.py --episodes 5000 --lr 3e-4 --device cuda
 python train_torch_dqn.py --episodes 5000 --lr 3e-4 --device cuda
+```
+
+Train directly against the heuristic baseline:
+
+```bash
+python train_torch_ppo.py --episodes 5000 --opponent heuristic --device cuda
+python train_torch_dqn.py --episodes 5000 --opponent heuristic --device cuda
 ```
 
 Useful faster smoke test:
@@ -99,6 +111,15 @@ python evaluate.py --games 100 --deterministic --device cpu
 ```
 
 The model alternates between playing X and O against a random legal opponent.
+
+For cross-play benchmarking:
+
+```bash
+python benchmark.py --agents random,heuristic,mcts --games 100
+python benchmark.py --agents random,heuristic,mcts,ppo,dqn --games 100 \
+  --ppo-path runs/overnight_torch/ppo_seed0/super_ttt_agent_torch.pt \
+  --dqn-path runs/overnight_torch/dqn_seed0/dqn_agent_torch.pt
+```
 
 ## Play in Pygame
 
@@ -132,6 +153,8 @@ Keyboard shortcuts inside the window:
 - `torch_models.py`: PyTorch policy/value and DQN networks.
 - `train_torch_ppo.py`: PyTorch PPO-style self-play training loop.
 - `train_torch_dqn.py`: PyTorch DQN baseline.
+- `agents.py`: random, heuristic, rollout-MCTS, Q-table, PPO, and DQN agents.
+- `benchmark.py`: pairwise cross-play benchmarks and CSV output.
 - `train.py`: TensorFlow PPO-style self-play training loop.
 - `evaluate.py`: model evaluation against random play.
 - `app.py`: Pygame human-vs-agent UI.

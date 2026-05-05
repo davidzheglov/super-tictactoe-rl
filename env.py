@@ -19,18 +19,24 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-try:
-    with contextlib.redirect_stderr(io.StringIO()):
-        from tf_agents.environments import py_environment
-        from tf_agents.specs import array_spec
-        from tf_agents.trajectories import time_step as ts
-
-    TF_AGENTS_AVAILABLE = True
-except Exception:  # pragma: no cover - exercised when tf-agents is absent/incompatible.
+if os.environ.get("SUPER_TTT_DISABLE_TF_AGENTS") == "1":
     py_environment = None
     array_spec = None
     ts = None
     TF_AGENTS_AVAILABLE = False
+else:
+    try:
+        with contextlib.redirect_stderr(io.StringIO()):
+            from tf_agents.environments import py_environment
+            from tf_agents.specs import array_spec
+            from tf_agents.trajectories import time_step as ts
+
+        TF_AGENTS_AVAILABLE = True
+    except Exception:  # pragma: no cover - exercised when tf-agents is absent/incompatible.
+        py_environment = None
+        array_spec = None
+        ts = None
+        TF_AGENTS_AVAILABLE = False
 
 try:
     from .board import SuperTicTacToeBoard, all_playable_coords

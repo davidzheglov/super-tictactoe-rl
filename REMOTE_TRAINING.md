@@ -21,6 +21,15 @@ One command can run:
 - PyTorch DQN baseline on one GPU
 - Tabular Q-learning baseline on CPU
 
+The PyTorch PPO/DQN jobs use mixed opponent training by default:
+
+- 50% self-play
+- 40% heuristic opponent
+- 10% random opponent
+
+Override this with `--ppo-opponent heuristic`, `--dqn-opponent heuristic`, or
+`--mixed-self-prob/--mixed-heuristic-prob/--mixed-random-prob`.
+
 Each trainer is resumable and cached:
 
 - Checkpoints are saved every N episodes.
@@ -107,6 +116,17 @@ If both GPUs are busy, run only CPU Q-learning or wait:
 python run_remote_training.py --only q_learning --output-dir runs/overnight
 ```
 
+Pure heuristic-opponent curriculum:
+
+```bash
+python run_remote_training.py \
+  --neural-backend torch \
+  --gpus 0,1 \
+  --ppo-opponent heuristic \
+  --dqn-opponent heuristic \
+  --output-dir runs/heuristic_curriculum
+```
+
 ## Useful Run Sizes
 
 Default overnight command:
@@ -173,6 +193,22 @@ Copy `super_ttt_agent_torch.pt` into your local `models/` folder, then run:
 
 ```bash
 python app.py --model-path models/super_ttt_agent_torch.pt
+```
+
+Run cross-play benchmarks on the server:
+
+```bash
+python benchmark.py \
+  --agents random,heuristic,mcts,ppo,dqn,q \
+  --games 100 \
+  --output-dir runs/overnight_torch/benchmark
+```
+
+The benchmark writes:
+
+```text
+runs/overnight_torch/benchmark/benchmark_raw.csv
+runs/overnight_torch/benchmark/benchmark_summary.csv
 ```
 
 ## Re-running Is Safe
