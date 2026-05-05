@@ -6,7 +6,8 @@ import argparse
 import importlib.util
 import os
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from pathlib import Path
+from typing import Any, List, Optional, Tuple
 
 os.environ.setdefault("GYM_DISABLE_WARNINGS", "1")
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "hide")
@@ -90,6 +91,13 @@ Coord = Tuple[int, int, int, int]
 
 
 @dataclass
+class LoadedAgent:
+    backend: str
+    model: Any
+    device: Any
+
+
+@dataclass
 class Button:
     rect: pygame.Rect
     label: str
@@ -155,13 +163,49 @@ def coord_from_point(pos: Tuple[int, int]) -> Optional[Coord]:
     return None
 
 
-def load_agent(model_path: str, hidden_size: int):
+def load_agent(model_path: str, hidden_size: int, device_arg: str):
+    path = Path(model_path)
+    if path.exists():
+        try:
+            import torch
+
+            try:
+                from .torch_models import (
+                    TorchDQN,
+                    TorchPolicyValueNet,
+                    resolve_torch_device,
+                )
+            except ImportError:  # pragma: no cover
+                from torch_models import (
+                    TorchDQN,
+                    TorchPolicyValueNet,
+                    resolve_torch_device,
+                )
+
+            payload = torch.load(path, map_location="cpu")
+            algo = str(payload.get("algo", ""))
+            torch_device = resolve_torch_device(device_arg)
+            if algo == "torch_ppo":
+                model = TorchPolicyValueNet(
+                    hidden_sizes=hidden_sizes_from_arg(int(payload.get("hidden_size", hidden_size)))
+                )
+                model.load_state_dict(payload["model_state_dict"])
+                model.to(torch_device).eval()
+                return LoadedAgent("torch_ppo", model, torch_device)
+            if algo == "torch_dqn":
+                model = TorchDQN(hidden_size=int(payload.get("hidden_size", hidden_size)))
+                model.load_state_dict(payload["online_state_dict"])
+                model.to(torch_device).eval()
+                return LoadedAgent("torch_dqn", model, torch_device)
+        except Exception as exc:
+            print(f"Could not load PyTorch checkpoint {model_path}: {exc}")
+
     if not checkpoint_exists(model_path):
         return None
     model = PolicyValueNet(hidden_sizes=hidden_sizes_from_arg(hidden_size))
     model(tf.zeros((1, 97), dtype=tf.float32))
     load_checkpoint(model, model_path)
-    return model
+    return LoadedAgent("tf_ppo", model, resolve_tf_device(device_arg))
 
 
 def reset_state(state: GameState) -> None:
@@ -203,12 +247,37 @@ def agent_turn(state: GameState, model, device: str) -> None:
     action_mask = state.env.legal_action_mask()
     if model is None or not state.use_model:
         action = random_legal_action(action_mask, state.rng)
-    else:
-        action, _, _ = select_action(
-            model,
+    elif isinstance(model, LoadedAgent) and model.backend == "torch_ppo":
+        try:
+            from .torch_models import select_action_torch
+        except ImportError:  # pragma: no cover
+            from torch_models import select_action_torch
+
+        action, _, _ = select_action_torch(
+            model.model,
             state.env.get_observation(),
             action_mask,
-            device=device,
+            device=model.device,
+            deterministic=state.deterministic,
+        )
+    elif isinstance(model, LoadedAgent) and model.backend == "torch_dqn":
+        try:
+            from .torch_models import masked_q_argmax
+        except ImportError:  # pragma: no cover
+            from torch_models import masked_q_argmax
+
+        action = masked_q_argmax(
+            model.model,
+            state.env.get_observation(),
+            action_mask,
+            device=model.device,
+        )
+    else:
+        action, _, _ = select_action(
+            model.model if isinstance(model, LoadedAgent) else model,
+            state.env.get_observation(),
+            action_mask,
+            device=model.device if isinstance(model, LoadedAgent) else device,
             deterministic=state.deterministic,
         )
     apply_action(state, action)
@@ -529,7 +598,7 @@ def main() -> None:
 
     model = None
     if not args.random_agent:
-        model = load_agent(args.model_path, args.hidden_size)
+        model = load_agent(args.model_path, args.hidden_size, args.device)
     device = resolve_tf_device(args.device)
 
     state = GameState(

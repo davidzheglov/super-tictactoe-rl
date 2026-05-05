@@ -4,10 +4,10 @@ This guide is for an Ubuntu server with NVIDIA A2 GPUs.
 
 ## Is This Worth Doing?
 
-Yes. The neural-network updates in PPO and DQN can use the GPU, and your server
-has two A2 cards. Environment simulation is still Python/NumPy and therefore
-CPU-bound, so speedup will not be linear with GPU count. Still, overnight remote
-training is much more practical than MacBook CPU training.
+Yes. The neural-network updates in PPO and DQN now use PyTorch/CUDA by default,
+and your server has two A2 cards. Environment simulation is still Python/NumPy
+and therefore CPU-bound, so speedup will not be linear with GPU count. Still,
+overnight remote training is much more practical than MacBook CPU training.
 
 Your `nvidia-smi` shows both GPUs are already doing work. GPU 0 has a large
 process using about 6.7 GB. If those processes are not yours, use only GPU 1 or
@@ -17,8 +17,8 @@ wait until the GPUs are free.
 
 One command can run:
 
-- PPO self-play agent on one GPU
-- DQN baseline on one GPU
+- PyTorch PPO self-play agent on one GPU
+- PyTorch DQN baseline on one GPU
 - Tabular Q-learning baseline on CPU
 
 Each trainer is resumable and cached:
@@ -64,8 +64,8 @@ cd super_tictactoe_rl
 bash setup_remote_gpu.sh
 ```
 
-This creates `.venv`, installs `requirements-remote-gpu.txt`, and prints the
-TensorFlow-visible GPUs.
+This creates `.venv`, installs a CUDA-enabled PyTorch wheel plus
+`requirements-remote-gpu.txt`, and prints the PyTorch-visible GPUs.
 
 ## Start Overnight Training
 
@@ -77,6 +77,11 @@ cd ~/super_tictactoe_rl
 source .venv/bin/activate
 python run_remote_training.py --gpus 0,1 --output-dir runs/overnight
 ```
+
+The default neural backend is PyTorch. Use `--neural-backend tf` only if you
+explicitly want the TensorFlow trainer. On the tested server, TensorFlow could
+see the A2 GPUs but failed generated kernels such as ReLU, so PyTorch is the
+correct backend for real GPU training.
 
 Detach:
 
@@ -161,13 +166,13 @@ scp -r USER@SERVER:~/super_tictactoe_rl/runs/overnight ./remote_results
 The PPO checkpoint is:
 
 ```text
-runs/overnight/ppo_seed0/super_ttt_agent.pt*
+runs/overnight/ppo_seed0/super_ttt_agent_torch.pt
 ```
 
-Copy all `super_ttt_agent.pt*` files into your local `models/` folder, then run:
+Copy `super_ttt_agent_torch.pt` into your local `models/` folder, then run:
 
 ```bash
-python app.py --model-path models/super_ttt_agent.pt
+python app.py --model-path models/super_ttt_agent_torch.pt
 ```
 
 ## Re-running Is Safe
@@ -177,4 +182,3 @@ You can run the same command again. It will:
 - Skip cached tests if source did not change.
 - Resume partial checkpoints.
 - Skip completed jobs with `.done` markers.
-

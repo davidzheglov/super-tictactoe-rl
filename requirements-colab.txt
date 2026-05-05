@@ -10,4 +10,5 @@ pandas==2.2.2
 matplotlib==3.8.4
 gymnasium==1.1.1
 tqdm>=4.66
+torch>=2.2
 urllib3<2

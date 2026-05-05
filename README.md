@@ -48,7 +48,8 @@ condition only to columns.
 
 ## Setup
 
-Python 3.9, 3.10, or 3.11 is recommended for the TensorFlow/TF-Agents pins.
+Python 3.9+ works for the PyTorch trainers. TensorFlow/TF-Agents support is kept
+for the assignment bonus path, but remote GPU training should use PyTorch.
 
 ```bash
 cd super_tictactoe_rl
@@ -57,8 +58,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-On Apple Silicon, TensorFlow can use the Metal backend if your local TensorFlow
-installation supports it. CPU training also works.
+On the remote Ubuntu GPU server, use `setup_remote_gpu.sh`; it installs a
+CUDA-enabled PyTorch wheel from the official PyTorch CUDA index.
 
 ## Run Tests
 
@@ -68,30 +69,28 @@ python tests.py
 
 ## Train
 
-The trainer uses TensorFlow plus a TF-Agents `PyEnvironment` integration. The
-policy/value update is custom PPO-style self-play so action masks and final
-winner/loser rewards are handled cleanly. The scripts set
-`TF_USE_LEGACY_KERAS=1` automatically because TF-Agents 0.19 depends on the
-legacy Keras compatibility path.
+The recommended trainers are PyTorch PPO self-play and PyTorch DQN. Both use
+legal-action masking and save resumable `.pt` checkpoints.
 
 ```bash
-python train.py --episodes 5000 --lr 3e-4 --device cpu
+python train_torch_ppo.py --episodes 5000 --lr 3e-4 --device cuda
+python train_torch_dqn.py --episodes 5000 --lr 3e-4 --device cuda
 ```
 
 Useful faster smoke test:
 
 ```bash
-python train.py --episodes 20 --batch-episodes 4 --device cpu
+python train_torch_ppo.py --episodes 20 --batch-episodes 4 --device cpu
 ```
 
-The checkpoint is saved as a TensorFlow checkpoint prefix:
+The main PPO checkpoint is saved as:
 
 ```text
-models/super_ttt_agent.pt
-models/super_ttt_agent.pt.index
-models/super_ttt_agent.pt.data-00000-of-00001
-models/super_ttt_agent.pt.json
+models/super_ttt_agent_torch.pt
+models/super_ttt_agent_torch.pt.json
 ```
+
+The TensorFlow/TF-Agents compatible trainer is still available as `train.py`.
 
 ## Evaluate
 
@@ -114,7 +113,7 @@ Useful options:
 
 ```bash
 python app.py --human-player O
-python app.py --model-path models/super_ttt_agent.pt --sampling-agent
+python app.py --model-path models/super_ttt_agent_torch.pt --sampling-agent
 python app.py --random-agent
 ```
 
@@ -130,7 +129,10 @@ Keyboard shortcuts inside the window:
 - `board.py`: pure NumPy board, stochastic move resolution, win checks.
 - `env.py`: Gymnasium environment and TF-Agents `PyEnvironment`.
 - `models.py`: TensorFlow/Keras policy-value network and masked action sampling.
-- `train.py`: PPO-style self-play training loop.
+- `torch_models.py`: PyTorch policy/value and DQN networks.
+- `train_torch_ppo.py`: PyTorch PPO-style self-play training loop.
+- `train_torch_dqn.py`: PyTorch DQN baseline.
+- `train.py`: TensorFlow PPO-style self-play training loop.
 - `evaluate.py`: model evaluation against random play.
 - `app.py`: Pygame human-vs-agent UI.
 - `utils.py`: shared checkpoint, seeding, and device helpers.

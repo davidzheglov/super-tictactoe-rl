@@ -1,14 +1,11 @@
 # Ubuntu remote GPU training dependencies.
 # Install inside a virtual environment on the server.
 #
-# TensorFlow 2.16's [and-cuda] extra installs CUDA runtime wheels compatible
-# with recent NVIDIA drivers. Your shown driver 570.211.01 / CUDA 12.8 is new
-# enough for this path.
+# PyTorch itself is installed by setup_remote_gpu.sh from the official CUDA
+# wheel index so it gets a GPU-enabled build instead of a CPU-only wheel.
 numpy==1.26.4
 pandas==2.2.2
 matplotlib==3.8.4
 gymnasium==1.1.1
 tqdm>=4.66
-tensorflow[and-cuda]>=2.16,<2.17
-tf-keras>=2.16,<2.17
 urllib3<2

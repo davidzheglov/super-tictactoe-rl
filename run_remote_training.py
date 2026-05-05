@@ -82,6 +82,46 @@ print(float(y.numpy()[0, 0]))
     return False
 
 
+def torch_gpu_works(gpu: str) -> bool:
+    """Return True if PyTorch can run forward/backward kernels on a GPU."""
+    code = r"""
+import torch
+print("torch", torch.__version__)
+print("cuda_available", torch.cuda.is_available())
+if not torch.cuda.is_available():
+    raise SystemExit("CUDA is not available to PyTorch")
+device = torch.device("cuda")
+x = torch.randn((128, 128), device=device, requires_grad=True)
+layer = torch.nn.Sequential(
+    torch.nn.Linear(128, 256),
+    torch.nn.ReLU(),
+    torch.nn.Linear(256, 96),
+).to(device)
+y = layer(x).relu().mean()
+y.backward()
+torch.cuda.synchronize()
+print("torch gpu ok", float(y.detach().cpu()))
+"""
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode == 0:
+        print(f"[gpu-check] GPU {gpu}: PyTorch CUDA kernels OK")
+        return True
+    print(f"[gpu-check] GPU {gpu}: PyTorch CUDA kernels FAILED")
+    print(proc.stdout[-2000:])
+    return False
+
+
 def launch_job(job: Job, dry_run: bool = False) -> subprocess.Popen:
     job.log_path.parent.mkdir(parents=True, exist_ok=True)
     if job.done_file.exists():
@@ -150,6 +190,11 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
     ppo_dir = run_dir / "ppo_seed0"
     dqn_dir = run_dir / "dqn_seed0"
     q_dir = run_dir / "q_learning_seed0"
+    use_torch = args.neural_backend == "torch"
+    ppo_script = "train_torch_ppo.py" if use_torch else "train.py"
+    dqn_script = "train_torch_dqn.py" if use_torch else "train_dqn.py"
+    ppo_save_name = "super_ttt_agent_torch.pt" if use_torch else "super_ttt_agent.pt"
+    dqn_save_name = "dqn_agent_torch.pt" if use_torch else "dqn_agent.pt"
 
     return [
         Job(
@@ -159,7 +204,7 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
             done_file=ppo_dir / "ppo.done",
             cmd=[
                 py,
-                str(ROOT / "train.py"),
+                str(ROOT / ppo_script),
                 "--episodes",
                 str(args.ppo_episodes),
                 "--batch-episodes",
@@ -175,7 +220,7 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 "--seed",
                 "0",
                 "--save-path",
-                str(ppo_dir / "super_ttt_agent.pt"),
+                str(ppo_dir / ppo_save_name),
                 "--log-csv",
                 str(ppo_dir / "ppo_log.csv"),
                 "--done-file",
@@ -195,7 +240,7 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
             done_file=dqn_dir / "dqn.done",
             cmd=[
                 py,
-                str(ROOT / "train_dqn.py"),
+                str(ROOT / dqn_script),
                 "--episodes",
                 str(args.dqn_episodes),
                 "--batch-size",
@@ -207,7 +252,7 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 "--seed",
                 "0",
                 "--save-path",
-                str(dqn_dir / "dqn_agent.pt"),
+                str(dqn_dir / dqn_save_name),
                 "--log-csv",
                 str(dqn_dir / "dqn_log.csv"),
                 "--done-file",
@@ -254,6 +299,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=str, default=str(ROOT / "runs" / "overnight"))
     parser.add_argument("--gpus", type=str, default="0,1", help="Comma-separated GPU ids for neural jobs.")
     parser.add_argument(
+        "--neural-backend",
+        type=str,
+        default="torch",
+        choices=["torch", "tf"],
+        help="Neural trainer backend for PPO/DQN. Default is PyTorch for reliable CUDA training.",
+    )
+    parser.add_argument(
         "--neural-device",
         type=str,
         default="auto",
@@ -263,7 +315,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-gpu-check",
         action="store_true",
-        help="Do not run TensorFlow generated-kernel checks before GPU jobs.",
+        help="Do not run backend GPU kernel checks before GPU jobs.",
+    )
+    parser.add_argument(
+        "--allow-cpu-fallback",
+        action="store_true",
+        help="Allow PPO/DQN to continue on CPU if no requested GPU passes checks.",
     )
     parser.add_argument("--only", type=str, default="all", help="Comma list: all,ppo,dqn,q_learning")
     parser.add_argument("--dry-run", action="store_true")
@@ -299,12 +356,19 @@ def main() -> None:
         print("[gpu-check] neural-device=cpu; hiding GPUs for PPO/DQN")
         gpus = []
     elif gpus and not args.skip_gpu_check:
-        working_gpus = [gpu for gpu in gpus if tensorflow_gpu_works(gpu)]
+        check_fn = torch_gpu_works if args.neural_backend == "torch" else tensorflow_gpu_works
+        working_gpus = [gpu for gpu in gpus if check_fn(gpu)]
         if not working_gpus:
             print(
-                "[gpu-check] No requested GPU passed the TensorFlow kernel check; "
-                "falling back to CPU for PPO/DQN."
+                f"[gpu-check] No requested GPU passed the {args.neural_backend} kernel check."
             )
+            if args.allow_cpu_fallback or args.neural_backend == "tf":
+                print("[gpu-check] Falling back to CPU for PPO/DQN.")
+            else:
+                raise SystemExit(
+                    "No requested GPU is usable for PyTorch. Install CUDA-enabled torch "
+                    "or pass --allow-cpu-fallback explicitly."
+                )
         gpus = working_gpus
 
     gpu_jobs = [job for job in jobs if job.name in {"ppo", "dqn"}]

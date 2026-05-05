@@ -3,44 +3,119 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import os
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 os.environ.setdefault("GYM_DISABLE_WARNINGS", "1")
-if (
-    importlib.util.find_spec("tf_agents") is not None
-    and importlib.util.find_spec("tf_keras") is not None
-):
-    os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
-
 import numpy as np
-import tensorflow as tf
 
 try:
     from .env import SuperTicTacToeEnv
-    from .models import PolicyValueNet, select_action
     from .utils import (
         checkpoint_exists,
-        hidden_sizes_from_arg,
-        load_checkpoint,
         project_root,
         random_legal_action,
-        resolve_tf_device,
         set_global_seeds,
     )
 except ImportError:  # pragma: no cover
     from env import SuperTicTacToeEnv
-    from models import PolicyValueNet, select_action
     from utils import (
         checkpoint_exists,
-        hidden_sizes_from_arg,
-        load_checkpoint,
         project_root,
         random_legal_action,
-        resolve_tf_device,
         set_global_seeds,
     )
+
+
+@dataclass
+class LoadedAgent:
+    backend: str
+    model: Any
+    device: Any
+
+
+def load_agent(path: str, hidden_size: int, device_arg: str) -> LoadedAgent:
+    model_path = Path(path)
+    if model_path.exists():
+        try:
+            import torch
+
+            try:
+                from .torch_models import (
+                    TorchDQN,
+                    TorchPolicyValueNet,
+                    resolve_torch_device,
+                )
+            except ImportError:  # pragma: no cover
+                from torch_models import TorchDQN, TorchPolicyValueNet, resolve_torch_device
+
+            payload = torch.load(model_path, map_location="cpu")
+            algo = str(payload.get("algo", ""))
+            torch_device = resolve_torch_device(device_arg)
+            if algo == "torch_ppo":
+                model = TorchPolicyValueNet(hidden_sizes=(hidden_size, hidden_size))
+                model.load_state_dict(payload["model_state_dict"])
+                model.to(torch_device).eval()
+                return LoadedAgent("torch_ppo", model, torch_device)
+            if algo == "torch_dqn":
+                model = TorchDQN(hidden_size=hidden_size)
+                model.load_state_dict(payload["online_state_dict"])
+                model.to(torch_device).eval()
+                return LoadedAgent("torch_dqn", model, torch_device)
+        except Exception as exc:
+            raise RuntimeError(f"Could not load PyTorch checkpoint {model_path}: {exc}") from exc
+
+    if not checkpoint_exists(path):
+        raise FileNotFoundError(f"No checkpoint found at {path}. Run training first.")
+
+    import importlib.util
+
+    if (
+        importlib.util.find_spec("tf_agents") is not None
+        and importlib.util.find_spec("tf_keras") is not None
+    ):
+        os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
+    import tensorflow as tf
+
+    try:
+        from .models import PolicyValueNet
+        from .utils import hidden_sizes_from_arg, load_checkpoint, resolve_tf_device
+    except ImportError:  # pragma: no cover
+        from models import PolicyValueNet
+        from utils import hidden_sizes_from_arg, load_checkpoint, resolve_tf_device
+
+    model = PolicyValueNet(hidden_sizes=hidden_sizes_from_arg(hidden_size))
+    model(tf.zeros((1, 97), dtype=tf.float32))
+    load_checkpoint(model, path)
+    return LoadedAgent("tf_ppo", model, resolve_tf_device(device_arg))
+
+
+def agent_action(agent: LoadedAgent, obs: np.ndarray, mask: np.ndarray, deterministic: bool) -> int:
+    if agent.backend == "torch_ppo":
+        try:
+            from .torch_models import select_action_torch
+        except ImportError:  # pragma: no cover
+            from torch_models import select_action_torch
+
+        action, _, _ = select_action_torch(agent.model, obs, mask, agent.device, deterministic)
+        return action
+    if agent.backend == "torch_dqn":
+        try:
+            from .torch_models import masked_q_argmax
+        except ImportError:  # pragma: no cover
+            from torch_models import masked_q_argmax
+
+        return masked_q_argmax(agent.model, obs, mask, agent.device)
+
+    try:
+        from .models import select_action
+    except ImportError:  # pragma: no cover
+        from models import select_action
+
+    action, _, _ = select_action(agent.model, obs, mask, agent.device, deterministic)
+    return action
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,16 +134,7 @@ def main() -> None:
     args = parse_args()
     set_global_seeds(args.seed)
     rng = np.random.default_rng(args.seed)
-    device = resolve_tf_device(args.device)
-
-    if not checkpoint_exists(args.model_path):
-        raise FileNotFoundError(
-            f"No checkpoint found at prefix {args.model_path}. Run train.py first."
-        )
-
-    model = PolicyValueNet(hidden_sizes=hidden_sizes_from_arg(args.hidden_size))
-    model(tf.zeros((1, 97), dtype=tf.float32))
-    load_checkpoint(model, args.model_path)
+    agent = load_agent(args.model_path, args.hidden_size, args.device)
 
     results = {"wins": 0, "losses": 0, "draws": 0}
     lengths = []
@@ -87,13 +153,7 @@ def main() -> None:
         while not done:
             action_mask = env.legal_action_mask()
             if env.current_player == agent_player:
-                action, _, _ = select_action(
-                    model,
-                    obs,
-                    action_mask,
-                    device=device,
-                    deterministic=args.deterministic,
-                )
+                action = agent_action(agent, obs, action_mask, args.deterministic)
             else:
                 action = random_legal_action(action_mask, rng)
 
@@ -113,7 +173,7 @@ def main() -> None:
         lengths.append(length)
         forfeits.append(game_forfeits)
 
-    print("Evaluation versus random opponent")
+    print(f"Evaluation versus random opponent ({agent.backend})")
     print(f"games: {args.games}")
     print(f"wins: {results['wins']}")
     print(f"losses: {results['losses']}")
