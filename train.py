@@ -331,7 +331,8 @@ def main() -> None:
 
     hidden_sizes = hidden_sizes_from_arg(args.hidden_size)
     model = PolicyValueNet(hidden_sizes=hidden_sizes)
-    model(tf.zeros((1, 97), dtype=tf.float32))
+    with tf.device("/CPU:0"):
+        model(tf.zeros((1, 97), dtype=tf.float32))
     optimizer_class = getattr(tf.keras.optimizers, "legacy", tf.keras.optimizers).Adam
     optimizer = optimizer_class(learning_rate=args.lr)
     episode_counter = tf.Variable(0, trainable=False, dtype=tf.int64, name="episodes")

@@ -97,14 +97,24 @@ def select_action(
         mask_tensor = tf.convert_to_tensor(action_mask[None, :], dtype=tf.bool)
         logits, value = model(obs_tensor, training=False)
         masked = mask_logits(logits, mask_tensor)
-        if deterministic:
-            action_tensor = tf.argmax(masked, axis=-1, output_type=tf.int32)
-        else:
-            action_tensor = tf.random.categorical(masked, num_samples=1)[:, 0]
-        log_prob = action_log_probs(masked, action_tensor)
+
+    masked_np = masked.numpy()[0]
+    shifted = masked_np - np.max(masked_np)
+    probs = np.exp(shifted)
+    probs = np.where(action_mask.astype(bool), probs, 0.0)
+    prob_sum = float(np.sum(probs))
+    if prob_sum <= 0.0:
+        raise ValueError("Masked policy produced no valid probabilities.")
+    probs = probs / prob_sum
+
+    if deterministic:
+        action = int(np.argmax(masked_np))
+    else:
+        action = int(np.random.choice(np.arange(probs.shape[0]), p=probs))
+    log_prob = float(np.log(max(float(probs[action]), 1.0e-45)))
 
     return (
-        int(action_tensor.numpy()[0]),
-        float(log_prob.numpy()[0]),
+        action,
+        log_prob,
         float(value.numpy()[0, 0]),
     )

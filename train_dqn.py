@@ -150,8 +150,9 @@ def main() -> None:
     device = resolve_tf_device(args.device)
     online = DQN(hidden_size=args.hidden_size)
     target = DQN(hidden_size=args.hidden_size)
-    online(tf.zeros((1, 97), dtype=tf.float32))
-    target(tf.zeros((1, 97), dtype=tf.float32))
+    with tf.device("/CPU:0"):
+        online(tf.zeros((1, 97), dtype=tf.float32))
+        target(tf.zeros((1, 97), dtype=tf.float32))
     target.set_weights(online.get_weights())
     optimizer = tf.keras.optimizers.Adam(learning_rate=args.lr)
     episode_counter = tf.Variable(0, trainable=False, dtype=tf.int64, name="episodes")
