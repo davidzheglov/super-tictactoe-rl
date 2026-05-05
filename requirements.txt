@@ -1,0 +1,9 @@
+numpy>=1.24
+gymnasium>=0.29
+tensorflow>=2.15,<2.17
+tf-keras>=2.16,<2.17
+tensorflow-probability>=0.23,<0.25
+tf-agents>=0.19,<0.20
+grpcio>=1.59,<1.75
+pytest>=7.0
+urllib3<2

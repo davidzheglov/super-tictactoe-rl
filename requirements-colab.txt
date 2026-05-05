@@ -1,0 +1,13 @@
+# Colab training dependencies.
+# This intentionally excludes pygame because Colab does not need the local UI
+# and older pygame wheels often fail to build in hosted notebook runtimes.
+#
+# NumPy/Pandas/Matplotlib are pinned and force-reinstalled together by the
+# notebook setup cell to avoid Colab binary ABI mismatches such as:
+# "numpy.dtype size changed, may indicate binary incompatibility".
+numpy==1.26.4
+pandas==2.2.2
+matplotlib==3.8.4
+gymnasium==1.1.1
+tqdm>=4.66
+urllib3<2

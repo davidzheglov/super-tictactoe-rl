@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+runs/
+models/*.pt*
+models/*.pkl
+models/*.csv
+models/*.done
+models/*.json
+
+*.zip
