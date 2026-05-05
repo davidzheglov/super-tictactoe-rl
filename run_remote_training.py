@@ -50,6 +50,38 @@ def run_tests_once(cache_dir: Path, force: bool = False) -> None:
     print(f"[tests] cached result: {marker.name}")
 
 
+def tensorflow_gpu_works(gpu: str) -> bool:
+    """Return True if TensorFlow can run generated elementwise kernels on a GPU."""
+    code = r"""
+import tensorflow as tf
+with tf.device("/CPU:0"):
+    layer = tf.keras.layers.Dense(8, activation="relu")
+    layer(tf.zeros((1, 4), dtype=tf.float32))
+with tf.device("/GPU:0"):
+    x = tf.ones((16, 16), dtype=tf.float32)
+    y = tf.nn.relu(x)
+print(float(y.numpy()[0, 0]))
+"""
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    env.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode == 0:
+        print(f"[gpu-check] GPU {gpu}: TensorFlow generated kernels OK")
+        return True
+    print(f"[gpu-check] GPU {gpu}: TensorFlow generated kernels FAILED")
+    print(proc.stdout[-2000:])
+    return False
+
+
 def launch_job(job: Job, dry_run: bool = False) -> subprocess.Popen:
     job.log_path.parent.mkdir(parents=True, exist_ok=True)
     if job.done_file.exists():
@@ -139,7 +171,7 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 "--lr",
                 str(args.ppo_lr),
                 "--device",
-                "auto",
+                args.neural_device,
                 "--seed",
                 "0",
                 "--save-path",
@@ -171,7 +203,7 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 "--lr",
                 str(args.dqn_lr),
                 "--device",
-                "auto",
+                args.neural_device,
                 "--seed",
                 "0",
                 "--save-path",
@@ -221,6 +253,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run all remote training jobs.")
     parser.add_argument("--output-dir", type=str, default=str(ROOT / "runs" / "overnight"))
     parser.add_argument("--gpus", type=str, default="0,1", help="Comma-separated GPU ids for neural jobs.")
+    parser.add_argument(
+        "--neural-device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "gpu", "cuda", "mps"],
+        help="Device argument passed to PPO/DQN trainers.",
+    )
+    parser.add_argument(
+        "--skip-gpu-check",
+        action="store_true",
+        help="Do not run TensorFlow generated-kernel checks before GPU jobs.",
+    )
     parser.add_argument("--only", type=str, default="all", help="Comma list: all,ppo,dqn,q_learning")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force-tests", action="store_true")
@@ -251,6 +295,17 @@ def main() -> None:
     requested = {"ppo", "dqn", "q_learning"} if args.only == "all" else set(args.only.split(","))
     jobs = [job for job in make_jobs(args) if job.name in requested]
     gpus = [g.strip() for g in args.gpus.split(",") if g.strip()]
+    if args.neural_device == "cpu":
+        print("[gpu-check] neural-device=cpu; hiding GPUs for PPO/DQN")
+        gpus = []
+    elif gpus and not args.skip_gpu_check:
+        working_gpus = [gpu for gpu in gpus if tensorflow_gpu_works(gpu)]
+        if not working_gpus:
+            print(
+                "[gpu-check] No requested GPU passed the TensorFlow kernel check; "
+                "falling back to CPU for PPO/DQN."
+            )
+        gpus = working_gpus
 
     gpu_jobs = [job for job in jobs if job.name in {"ppo", "dqn"}]
     cpu_jobs = [job for job in jobs if job.name not in {"ppo", "dqn"}]
