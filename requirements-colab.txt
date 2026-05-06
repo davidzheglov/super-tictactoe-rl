@@ -11,4 +11,6 @@ matplotlib==3.8.4
 gymnasium==1.1.1
 tqdm>=4.66
 torch>=2.2
+torchrl>=0.6
+tensordict>=0.6
 urllib3<2

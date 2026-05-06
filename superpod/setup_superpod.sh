@@ -19,12 +19,14 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install --index-url https://download.pytorch.org/whl/cu128 torch
 python -m pip install -r requirements-remote-gpu.txt
 
-SUPER_TTT_DISABLE_TF_AGENTS=1 python - <<'PY'
+python - <<'PY'
 import sys
 import torch
+import torchrl
 
 print("Python:", sys.version)
 print("PyTorch:", torch.__version__)
+print("TorchRL:", getattr(torchrl, "__version__", "unknown"))
 print("CUDA available:", torch.cuda.is_available())
 print("CUDA device count:", torch.cuda.device_count())
 if torch.cuda.is_available():

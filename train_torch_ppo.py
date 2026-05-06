@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -236,8 +237,11 @@ def save_checkpoint(
 ) -> None:
     save_path = Path(path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
+    algo_label = os.environ.get("SUPER_TTT_ALGO_LABEL", "torch_ppo")
+    framework = os.environ.get("SUPER_TTT_FRAMEWORK", "PyTorch")
     payload = {
-        "algo": "torch_ppo",
+        "algo": algo_label,
+        "framework": framework,
         "episodes": int(episodes),
         "model_state_dict": model.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
@@ -251,7 +255,8 @@ def save_checkpoint(
     with (save_path.with_suffix(save_path.suffix + ".json")).open("w", encoding="utf-8") as f:
         json.dump(
             {
-                "algo": "torch_ppo",
+                "algo": algo_label,
+                "framework": framework,
                 "episodes": int(episodes),
                 "checkpoint": str(save_path),
                 "hidden_size": int(args.hidden_size),

@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import copy
-import os
 import pickle
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Protocol, Tuple
 
 import numpy as np
-
-os.environ.setdefault("SUPER_TTT_DISABLE_TF_AGENTS", "1")
 
 try:
     from .board import BOARD_SIZE, Coord, all_playable_coords

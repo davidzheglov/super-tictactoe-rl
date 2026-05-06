@@ -20,7 +20,6 @@ VENV_DIR="${VENV_DIR:-.venv-superpod}"
 source "$VENV_DIR/bin/activate"
 
 export PYTHONUNBUFFERED=1
-export SUPER_TTT_DISABLE_TF_AGENTS=1
 export CUDA_VISIBLE_DEVICES=""
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 export MKL_NUM_THREADS="$OMP_NUM_THREADS"

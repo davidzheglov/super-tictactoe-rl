@@ -21,7 +21,6 @@ VENV_DIR="${VENV_DIR:-.venv-superpod}"
 source "$VENV_DIR/bin/activate"
 
 export PYTHONUNBUFFERED=1
-export SUPER_TTT_DISABLE_TF_AGENTS=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-14}"
 export MKL_NUM_THREADS="$OMP_NUM_THREADS"
 export NUMEXPR_NUM_THREADS="$OMP_NUM_THREADS"
@@ -61,7 +60,7 @@ if [[ "$stop_after_seconds" != "0" && "$stop_after_seconds" != "0.0" ]]; then
 fi
 
 if [[ "$algo" == "ppo" ]]; then
-  python train_torch_ppo.py \
+  python train_torchrl_ppo.py \
     --episodes "$episodes" \
     --batch-episodes "$batch_or_size" \
     --update-epochs 4 \
@@ -75,7 +74,7 @@ if [[ "$algo" == "ppo" ]]; then
     --mixed-random-prob "$mixed_random" \
     --device auto \
     --seed "$seed" \
-    --save-path "$out_dir/super_ttt_agent_torch.pt" \
+    --save-path "$out_dir/super_ttt_agent_torchrl.pt" \
     --log-csv "$out_dir/ppo_log.csv" \
     --done-file "$out_dir/ppo.done" \
     --save-interval "$save_interval" \

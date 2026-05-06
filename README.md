@@ -48,8 +48,8 @@ condition only to columns.
 
 ## Setup
 
-Python 3.9+ works for the PyTorch trainers. TensorFlow/TF-Agents support is kept
-for the assignment bonus path, but remote GPU training should use PyTorch.
+Python 3.9+ works for the PyTorch/TorchRL trainers. The normal install is
+Torch-only and uses TorchRL for the assignment bonus path.
 
 ```bash
 cd super_tictactoe_rl
@@ -69,40 +69,42 @@ python tests.py
 
 ## Train
 
-The recommended trainers are PyTorch PPO and PyTorch DQN. Both use legal-action
-masking and save resumable `.pt` checkpoints. The one-command remote runner
-uses mixed opponent training by default:
+The recommended bonus-path trainer is TorchRL PPO. The project also keeps a
+plain PyTorch PPO baseline and a PyTorch DQN baseline. All neural trainers use
+legal-action masking and save resumable `.pt` checkpoints. The one-command
+remote runner uses mixed opponent training by default:
 
 - 50% self-play
 - 40% heuristic opponent
 - 10% random opponent
 
 ```bash
-python train_torch_ppo.py --episodes 5000 --lr 3e-4 --device cuda
+python train_torchrl_ppo.py --episodes 5000 --lr 3e-4 --device cuda
 python train_torch_dqn.py --episodes 5000 --lr 3e-4 --device cuda
 ```
 
 Train directly against the heuristic baseline:
 
 ```bash
-python train_torch_ppo.py --episodes 5000 --opponent heuristic --device cuda
+python train_torchrl_ppo.py --episodes 5000 --opponent heuristic --device cuda
 python train_torch_dqn.py --episodes 5000 --opponent heuristic --device cuda
 ```
 
 Useful faster smoke test:
 
 ```bash
-python train_torch_ppo.py --episodes 20 --batch-episodes 4 --device cpu
+python train_torchrl_ppo.py --episodes 20 --batch-episodes 4 --device cpu
 ```
 
 The main PPO checkpoint is saved as:
 
 ```text
-models/super_ttt_agent_torch.pt
-models/super_ttt_agent_torch.pt.json
+models/super_ttt_agent_torchrl.pt
+models/super_ttt_agent_torchrl.pt.json
 ```
 
-The TensorFlow/TF-Agents compatible trainer is still available as `train.py`.
+`train_torchrl_ppo.py` validates the TorchRL action-masked environment wrapper
+before training and labels checkpoints as `torchrl_ppo`.
 
 ## Evaluate
 
@@ -117,7 +119,7 @@ For cross-play benchmarking:
 ```bash
 python benchmark.py --agents random,heuristic,mcts --games 100
 python benchmark.py --agents random,heuristic,mcts,ppo,dqn --games 100 \
-  --ppo-path runs/overnight_torch/ppo_seed0/super_ttt_agent_torch.pt \
+  --ppo-path runs/overnight_torch/ppo_seed0/super_ttt_agent_torchrl.pt \
   --dqn-path runs/overnight_torch/dqn_seed0/dqn_agent_torch.pt
 ```
 
@@ -135,7 +137,7 @@ Useful options:
 ```bash
 python app.py --agent heuristic
 python app.py --human-player O
-python app.py --model-path models/super_ttt_agent_torch.pt --sampling-agent
+python app.py --model-path models/super_ttt_agent_torchrl.pt --sampling-agent
 python app.py --random-agent
 ```
 
@@ -149,14 +151,14 @@ Keyboard shortcuts inside the window:
 ## Files
 
 - `board.py`: pure NumPy board, stochastic move resolution, win checks.
-- `env.py`: Gymnasium environment and TF-Agents `PyEnvironment`.
-- `models.py`: TensorFlow/Keras policy-value network and masked action sampling.
+- `env.py`: Gymnasium environment.
+- `torchrl_env.py`: TorchRL/GymWrapper environment with legal-action masks.
 - `torch_models.py`: PyTorch policy/value and DQN networks.
+- `train_torchrl_ppo.py`: TorchRL bonus-path PPO entrypoint.
 - `train_torch_ppo.py`: PyTorch PPO-style self-play training loop.
 - `train_torch_dqn.py`: PyTorch DQN baseline.
 - `agents.py`: random, heuristic, rollout-MCTS, Q-table, PPO, and DQN agents.
 - `benchmark.py`: pairwise cross-play benchmarks and CSV output.
-- `train.py`: TensorFlow PPO-style self-play training loop.
 - `evaluate.py`: model evaluation against random play.
 - `app.py`: Pygame human-vs-agent UI.
 - `utils.py`: shared checkpoint, seeding, and device helpers.

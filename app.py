@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,49 +10,35 @@ from typing import Any, List, Optional, Tuple
 
 os.environ.setdefault("GYM_DISABLE_WARNINGS", "1")
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "hide")
-if (
-    importlib.util.find_spec("tf_agents") is not None
-    and importlib.util.find_spec("tf_keras") is not None
-):
-    os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 
 import numpy as np
 import pygame
-import tensorflow as tf
 
 try:
     from .board import BOARD_SIZE, VALID_LEVEL_POSITIONS
     from .agents import HeuristicAgent
     from .env import SuperTicTacToeEnv
-    from .models import PolicyValueNet, select_action
     from .utils import (
-        checkpoint_exists,
         coord_label,
         hidden_sizes_from_arg,
-        load_checkpoint,
         player_name,
         project_root,
         random_legal_action,
-        resolve_tf_device,
     )
 except ImportError:  # pragma: no cover
     from board import BOARD_SIZE, VALID_LEVEL_POSITIONS
     from agents import HeuristicAgent
     from env import SuperTicTacToeEnv
-    from models import PolicyValueNet, select_action
     from utils import (
-        checkpoint_exists,
         coord_label,
         hidden_sizes_from_arg,
-        load_checkpoint,
         player_name,
         project_root,
         random_legal_action,
-        resolve_tf_device,
     )
 
 
-DEFAULT_MODEL_PATH = project_root() / "models" / "super_ttt_agent.pt"
+DEFAULT_MODEL_PATH = project_root() / "models" / "super_ttt_agent_torchrl.pt"
 
 CELL_SIZE = 42
 BOARD_LEFT = 64
@@ -167,47 +152,44 @@ def coord_from_point(pos: Tuple[int, int]) -> Optional[Coord]:
 
 def load_agent(model_path: str, hidden_size: int, device_arg: str):
     path = Path(model_path)
-    if path.exists():
-        try:
-            import torch
-
-            try:
-                from .torch_models import (
-                    TorchDQN,
-                    TorchPolicyValueNet,
-                    resolve_torch_device,
-                )
-            except ImportError:  # pragma: no cover
-                from torch_models import (
-                    TorchDQN,
-                    TorchPolicyValueNet,
-                    resolve_torch_device,
-                )
-
-            payload = torch.load(path, map_location="cpu")
-            algo = str(payload.get("algo", ""))
-            torch_device = resolve_torch_device(device_arg)
-            if algo == "torch_ppo":
-                model = TorchPolicyValueNet(
-                    hidden_sizes=hidden_sizes_from_arg(int(payload.get("hidden_size", hidden_size)))
-                )
-                model.load_state_dict(payload["model_state_dict"])
-                model.to(torch_device).eval()
-                return LoadedAgent("torch_ppo", model, torch_device)
-            if algo == "torch_dqn":
-                model = TorchDQN(hidden_size=int(payload.get("hidden_size", hidden_size)))
-                model.load_state_dict(payload["online_state_dict"])
-                model.to(torch_device).eval()
-                return LoadedAgent("torch_dqn", model, torch_device)
-        except Exception as exc:
-            print(f"Could not load PyTorch checkpoint {model_path}: {exc}")
-
-    if not checkpoint_exists(model_path):
+    if not path.exists():
         return None
-    model = PolicyValueNet(hidden_sizes=hidden_sizes_from_arg(hidden_size))
-    model(tf.zeros((1, 97), dtype=tf.float32))
-    load_checkpoint(model, model_path)
-    return LoadedAgent("tf_ppo", model, resolve_tf_device(device_arg))
+
+    try:
+        import torch
+
+        try:
+            from .torch_models import (
+                TorchDQN,
+                TorchPolicyValueNet,
+                resolve_torch_device,
+            )
+        except ImportError:  # pragma: no cover
+            from torch_models import (
+                TorchDQN,
+                TorchPolicyValueNet,
+                resolve_torch_device,
+            )
+
+        payload = torch.load(path, map_location="cpu")
+        algo = str(payload.get("algo", ""))
+        torch_device = resolve_torch_device(device_arg)
+        if algo in {"torch_ppo", "torchrl_ppo"}:
+            model = TorchPolicyValueNet(
+                hidden_sizes=hidden_sizes_from_arg(int(payload.get("hidden_size", hidden_size)))
+            )
+            model.load_state_dict(payload["model_state_dict"])
+            model.to(torch_device).eval()
+            return LoadedAgent("torch_ppo", model, torch_device)
+        if algo == "torch_dqn":
+            model = TorchDQN(hidden_size=int(payload.get("hidden_size", hidden_size)))
+            model.load_state_dict(payload["online_state_dict"])
+            model.to(torch_device).eval()
+            return LoadedAgent("torch_dqn", model, torch_device)
+        print(f"Unsupported PyTorch checkpoint algorithm {algo!r} in {model_path}")
+    except Exception as exc:
+        print(f"Could not load PyTorch checkpoint {model_path}: {exc}")
+    return None
 
 
 def reset_state(state: GameState) -> None:
@@ -245,7 +227,7 @@ def apply_action(state: GameState, action: int) -> None:
     del state.messages[8:]
 
 
-def agent_turn(state: GameState, model, device: str) -> None:
+def agent_turn(state: GameState, model) -> None:
     action_mask = state.env.legal_action_mask()
     if model is None or not state.use_model:
         action = random_legal_action(action_mask, state.rng)
@@ -277,13 +259,7 @@ def agent_turn(state: GameState, model, device: str) -> None:
             device=model.device,
         )
     else:
-        action, _, _ = select_action(
-            model.model if isinstance(model, LoadedAgent) else model,
-            state.env.get_observation(),
-            action_mask,
-            device=model.device if isinstance(model, LoadedAgent) else device,
-            deterministic=state.deterministic,
-        )
+        action = random_legal_action(action_mask, state.rng)
     apply_action(state, action)
 
 
@@ -459,7 +435,7 @@ def agent_label(model, use_model: bool) -> str:
         return "heuristic"
     if isinstance(model, LoadedAgent) and model.backend == "torch_dqn":
         return "DQN"
-    if isinstance(model, LoadedAgent) and model.backend in {"torch_ppo", "tf_ppo"}:
+    if isinstance(model, LoadedAgent) and model.backend == "torch_ppo":
         return "PPO"
     return "model"
 
@@ -631,8 +607,6 @@ def main() -> None:
         model = LoadedAgent("heuristic", HeuristicAgent(seed=args.seed), None)
     elif agent_kind == "model":
         model = load_agent(args.model_path, args.hidden_size, args.device)
-    device = resolve_tf_device(args.device)
-
     state = GameState(
         env=SuperTicTacToeEnv(seed=args.seed),
         human_player=1 if args.human_player == "X" else -1,
@@ -678,7 +652,7 @@ def main() -> None:
             and state.env.current_player != state.human_player
             and pygame.time.get_ticks() >= next_agent_time
         ):
-            agent_turn(state, model, device)
+            agent_turn(state, model)
             next_agent_time = pygame.time.get_ticks() + agent_delay_ms
 
         buttons = draw_screen(surface, state, model, fonts, mouse_pos)

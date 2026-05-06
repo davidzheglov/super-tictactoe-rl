@@ -81,7 +81,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--ppo-path",
         type=str,
-        default=str(root / "runs" / "overnight_torch" / "ppo_seed0" / "super_ttt_agent_torch.pt"),
+        default=str(root / "runs" / "overnight_torch" / "ppo_seed0" / "super_ttt_agent_torchrl.pt"),
     )
     parser.add_argument(
         "--dqn-path",

@@ -1,42 +1,15 @@
-"""Gymnasium and TF-Agents environments for Super Tic-Tac-Toe."""
+"""Gymnasium environment for Super Tic-Tac-Toe."""
 
 from __future__ import annotations
 
 import os
-import contextlib
-import io
-import importlib.util
-from typing import Dict, Optional, Tuple
+from typing import Optional
 
 os.environ.setdefault("GYM_DISABLE_WARNINGS", "1")
-if (
-    importlib.util.find_spec("tf_agents") is not None
-    and importlib.util.find_spec("tf_keras") is not None
-):
-    os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
-
-if os.environ.get("SUPER_TTT_DISABLE_TF_AGENTS") == "1":
-    py_environment = None
-    array_spec = None
-    ts = None
-    TF_AGENTS_AVAILABLE = False
-else:
-    try:
-        with contextlib.redirect_stderr(io.StringIO()):
-            from tf_agents.environments import py_environment
-            from tf_agents.specs import array_spec
-            from tf_agents.trajectories import time_step as ts
-
-        TF_AGENTS_AVAILABLE = True
-    except Exception:  # pragma: no cover - exercised when tf-agents is absent/incompatible.
-        py_environment = None
-        array_spec = None
-        ts = None
-        TF_AGENTS_AVAILABLE = False
 
 try:
     from .board import SuperTicTacToeBoard, all_playable_coords
@@ -153,73 +126,3 @@ class SuperTicTacToeEnv(gym.Env):
         if self.render_mode == "human":
             print(rendered)
         return rendered
-
-
-if TF_AGENTS_AVAILABLE:
-
-    class SuperTicTacToePyEnvironment(py_environment.PyEnvironment):
-        """TF-Agents PyEnvironment wrapper with an action mask in observation."""
-
-        def __init__(self, seed: Optional[int] = None):
-            super().__init__()
-            self._env = SuperTicTacToeEnv(seed=seed)
-            self._episode_ended = False
-            self._observation_spec = {
-                "observation": array_spec.BoundedArraySpec(
-                    shape=(97,),
-                    dtype=np.float32,
-                    minimum=-1.0,
-                    maximum=1.0,
-                    name="observation",
-                ),
-                "action_mask": array_spec.BoundedArraySpec(
-                    shape=(96,),
-                    dtype=np.int32,
-                    minimum=0,
-                    maximum=1,
-                    name="action_mask",
-                ),
-            }
-            self._action_spec = array_spec.BoundedArraySpec(
-                shape=(), dtype=np.int32, minimum=0, maximum=95, name="action"
-            )
-
-        def action_spec(self):
-            return self._action_spec
-
-        def observation_spec(self):
-            return self._observation_spec
-
-        def _reset(self):
-            self._episode_ended = False
-            observation, _ = self._env.reset()
-            return ts.restart(self._make_observation(observation))
-
-        def _step(self, action):
-            if self._episode_ended:
-                return self.reset()
-            observation, reward, terminated, truncated, _ = self._env.step(int(action))
-            self._episode_ended = bool(terminated or truncated)
-            tf_observation = self._make_observation(observation)
-            if self._episode_ended:
-                return ts.termination(tf_observation, np.asarray(reward, dtype=np.float32))
-            return ts.transition(
-                tf_observation,
-                reward=np.asarray(reward, dtype=np.float32),
-                discount=np.asarray(1.0, dtype=np.float32),
-            )
-
-        def _make_observation(self, observation: np.ndarray) -> Dict[str, np.ndarray]:
-            return {
-                "observation": observation.astype(np.float32),
-                "action_mask": self._env.legal_action_mask().astype(np.int32),
-            }
-
-else:
-
-    class SuperTicTacToePyEnvironment:  # type: ignore[no-redef]
-        def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "tf-agents is not installed. Install requirements.txt to use "
-                "SuperTicTacToePyEnvironment."
-            )

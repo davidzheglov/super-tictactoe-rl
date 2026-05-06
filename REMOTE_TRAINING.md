@@ -4,9 +4,10 @@ This guide is for an Ubuntu server with NVIDIA A2 GPUs.
 
 ## Is This Worth Doing?
 
-Yes. The neural-network updates in PPO and DQN now use PyTorch/CUDA by default,
-and your server has two A2 cards. Environment simulation is still Python/NumPy
-and therefore CPU-bound, so speedup will not be linear with GPU count. Still,
+Yes. The neural-network updates in PPO and DQN use PyTorch/CUDA, and the PPO
+bonus path validates a TorchRL action-masked environment before training. Your
+server has two A2 cards. Environment simulation is still Python/NumPy and
+therefore CPU-bound, so speedup will not be linear with GPU count. Still,
 overnight remote training is much more practical than MacBook CPU training.
 
 Your `nvidia-smi` shows both GPUs are already doing work. GPU 0 has a large
@@ -17,7 +18,7 @@ wait until the GPUs are free.
 
 One command can run:
 
-- PyTorch PPO self-play agent on one GPU
+- TorchRL PPO self-play agent on one GPU
 - PyTorch DQN baseline on one GPU
 - Tabular Q-learning baseline on CPU
 
@@ -48,7 +49,7 @@ sudo apt install -y python3 python3-venv python3-pip unzip tmux
 nvidia-smi
 ```
 
-`nvidia-smi` must work before TensorFlow can use the GPU.
+`nvidia-smi` must work before PyTorch/TorchRL can use the GPU.
 
 ## Transfer From Local Machine
 
@@ -87,10 +88,9 @@ source .venv/bin/activate
 python run_remote_training.py --gpus 0,1 --output-dir runs/overnight
 ```
 
-The default neural backend is PyTorch. Use `--neural-backend tf` only if you
-explicitly want the TensorFlow trainer. On the tested server, TensorFlow could
-see the A2 GPUs but failed generated kernels such as ReLU, so PyTorch is the
-correct backend for real GPU training.
+The default PPO backend is TorchRL. Use `--neural-backend torch` only if you
+want to skip the TorchRL environment validation and run the plain PyTorch PPO
+baseline.
 
 Detach:
 
@@ -120,7 +120,7 @@ Pure heuristic-opponent curriculum:
 
 ```bash
 python run_remote_training.py \
-  --neural-backend torch \
+  --neural-backend torchrl \
   --gpus 0,1 \
   --ppo-opponent heuristic \
   --dqn-opponent heuristic \
@@ -186,13 +186,13 @@ scp -r USER@SERVER:~/super_tictactoe_rl/runs/overnight ./remote_results
 The PPO checkpoint is:
 
 ```text
-runs/overnight/ppo_seed0/super_ttt_agent_torch.pt
+runs/overnight/ppo_seed0/super_ttt_agent_torchrl.pt
 ```
 
-Copy `super_ttt_agent_torch.pt` into your local `models/` folder, then run:
+Copy `super_ttt_agent_torchrl.pt` into your local `models/` folder, then run:
 
 ```bash
-python app.py --model-path models/super_ttt_agent_torch.pt
+python app.py --model-path models/super_ttt_agent_torchrl.pt
 ```
 
 Run cross-play benchmarks on the server:

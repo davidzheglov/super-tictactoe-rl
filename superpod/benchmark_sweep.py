@@ -57,7 +57,9 @@ def write_csv(path: Path, rows: List[Dict[str, object]]) -> None:
 def trained_agent(row: Dict[str, str], run_dir: Path, device: str):
     algo = row["algo"].strip().lower()
     if algo == "ppo":
-        path = run_dir / "super_ttt_agent_torch.pt"
+        path = run_dir / "super_ttt_agent_torchrl.pt"
+        if not path.exists():
+            path = run_dir / "super_ttt_agent_torch.pt"
         if not path.exists():
             return None, path
         agent = TorchPPOAgent(str(path), device=device, deterministic=True)

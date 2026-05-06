@@ -14,7 +14,6 @@ import numpy as np
 try:
     from .env import SuperTicTacToeEnv
     from .utils import (
-        checkpoint_exists,
         project_root,
         random_legal_action,
         set_global_seeds,
@@ -22,7 +21,6 @@ try:
 except ImportError:  # pragma: no cover
     from env import SuperTicTacToeEnv
     from utils import (
-        checkpoint_exists,
         project_root,
         random_legal_action,
         set_global_seeds,
@@ -38,58 +36,37 @@ class LoadedAgent:
 
 def load_agent(path: str, hidden_size: int, device_arg: str) -> LoadedAgent:
     model_path = Path(path)
-    if model_path.exists():
-        try:
-            import torch
-
-            try:
-                from .torch_models import (
-                    TorchDQN,
-                    TorchPolicyValueNet,
-                    resolve_torch_device,
-                )
-            except ImportError:  # pragma: no cover
-                from torch_models import TorchDQN, TorchPolicyValueNet, resolve_torch_device
-
-            payload = torch.load(model_path, map_location="cpu")
-            algo = str(payload.get("algo", ""))
-            torch_device = resolve_torch_device(device_arg)
-            if algo == "torch_ppo":
-                model = TorchPolicyValueNet(hidden_sizes=(hidden_size, hidden_size))
-                model.load_state_dict(payload["model_state_dict"])
-                model.to(torch_device).eval()
-                return LoadedAgent("torch_ppo", model, torch_device)
-            if algo == "torch_dqn":
-                model = TorchDQN(hidden_size=hidden_size)
-                model.load_state_dict(payload["online_state_dict"])
-                model.to(torch_device).eval()
-                return LoadedAgent("torch_dqn", model, torch_device)
-        except Exception as exc:
-            raise RuntimeError(f"Could not load PyTorch checkpoint {model_path}: {exc}") from exc
-
-    if not checkpoint_exists(path):
+    if not model_path.exists():
         raise FileNotFoundError(f"No checkpoint found at {path}. Run training first.")
 
-    import importlib.util
-
-    if (
-        importlib.util.find_spec("tf_agents") is not None
-        and importlib.util.find_spec("tf_keras") is not None
-    ):
-        os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
-    import tensorflow as tf
-
     try:
-        from .models import PolicyValueNet
-        from .utils import hidden_sizes_from_arg, load_checkpoint, resolve_tf_device
-    except ImportError:  # pragma: no cover
-        from models import PolicyValueNet
-        from utils import hidden_sizes_from_arg, load_checkpoint, resolve_tf_device
+        import torch
 
-    model = PolicyValueNet(hidden_sizes=hidden_sizes_from_arg(hidden_size))
-    model(tf.zeros((1, 97), dtype=tf.float32))
-    load_checkpoint(model, path)
-    return LoadedAgent("tf_ppo", model, resolve_tf_device(device_arg))
+        try:
+            from .torch_models import (
+                TorchDQN,
+                TorchPolicyValueNet,
+                resolve_torch_device,
+            )
+        except ImportError:  # pragma: no cover
+            from torch_models import TorchDQN, TorchPolicyValueNet, resolve_torch_device
+
+        payload = torch.load(model_path, map_location="cpu")
+        algo = str(payload.get("algo", ""))
+        torch_device = resolve_torch_device(device_arg)
+        if algo in {"torch_ppo", "torchrl_ppo"}:
+            model = TorchPolicyValueNet(hidden_sizes=(hidden_size, hidden_size))
+            model.load_state_dict(payload["model_state_dict"])
+            model.to(torch_device).eval()
+            return LoadedAgent("torch_ppo", model, torch_device)
+        if algo == "torch_dqn":
+            model = TorchDQN(hidden_size=hidden_size)
+            model.load_state_dict(payload["online_state_dict"])
+            model.to(torch_device).eval()
+            return LoadedAgent("torch_dqn", model, torch_device)
+        raise ValueError(f"Unsupported checkpoint algorithm {algo!r}.")
+    except Exception as exc:
+        raise RuntimeError(f"Could not load PyTorch checkpoint {model_path}: {exc}") from exc
 
 
 def agent_action(agent: LoadedAgent, obs: np.ndarray, mask: np.ndarray, deterministic: bool) -> int:
@@ -108,18 +85,11 @@ def agent_action(agent: LoadedAgent, obs: np.ndarray, mask: np.ndarray, determin
             from torch_models import masked_q_argmax
 
         return masked_q_argmax(agent.model, obs, mask, agent.device)
-
-    try:
-        from .models import select_action
-    except ImportError:  # pragma: no cover
-        from models import select_action
-
-    action, _, _ = select_action(agent.model, obs, mask, agent.device, deterministic)
-    return action
+    raise ValueError(f"Unsupported backend {agent.backend!r}")
 
 
 def parse_args() -> argparse.Namespace:
-    default_model_path = project_root() / "models" / "super_ttt_agent.pt"
+    default_model_path = project_root() / "models" / "super_ttt_agent_torchrl.pt"
     parser = argparse.ArgumentParser(description="Evaluate a trained model.")
     parser.add_argument("--games", type=int, default=100)
     parser.add_argument("--model-path", type=str, default=str(default_model_path))

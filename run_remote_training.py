@@ -50,38 +50,6 @@ def run_tests_once(cache_dir: Path, force: bool = False) -> None:
     print(f"[tests] cached result: {marker.name}")
 
 
-def tensorflow_gpu_works(gpu: str) -> bool:
-    """Return True if TensorFlow can run generated elementwise kernels on a GPU."""
-    code = r"""
-import tensorflow as tf
-with tf.device("/CPU:0"):
-    layer = tf.keras.layers.Dense(8, activation="relu")
-    layer(tf.zeros((1, 4), dtype=tf.float32))
-with tf.device("/GPU:0"):
-    x = tf.ones((16, 16), dtype=tf.float32)
-    y = tf.nn.relu(x)
-print(float(y.numpy()[0, 0]))
-"""
-    env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(gpu)
-    env.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
-    proc = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=str(ROOT),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        timeout=60,
-    )
-    if proc.returncode == 0:
-        print(f"[gpu-check] GPU {gpu}: TensorFlow generated kernels OK")
-        return True
-    print(f"[gpu-check] GPU {gpu}: TensorFlow generated kernels FAILED")
-    print(proc.stdout[-2000:])
-    return False
-
-
 def torch_gpu_works(gpu: str) -> bool:
     """Return True if PyTorch can run forward/backward kernels on a GPU."""
     code = r"""
@@ -128,7 +96,6 @@ def launch_job(job: Job, dry_run: bool = False) -> subprocess.Popen:
         print(f"[{job.name}] done marker exists; skipping")
         return None  # type: ignore[return-value]
     env = os.environ.copy()
-    env.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
     env.setdefault("PYTHONUNBUFFERED", "1")
     if job.gpu is not None:
         env["CUDA_VISIBLE_DEVICES"] = str(job.gpu)
@@ -190,26 +157,23 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
     ppo_dir = run_dir / "ppo_seed0"
     dqn_dir = run_dir / "dqn_seed0"
     q_dir = run_dir / "q_learning_seed0"
-    use_torch = args.neural_backend == "torch"
-    ppo_script = "train_torch_ppo.py" if use_torch else "train.py"
-    dqn_script = "train_torch_dqn.py" if use_torch else "train_dqn.py"
-    ppo_save_name = "super_ttt_agent_torch.pt" if use_torch else "super_ttt_agent.pt"
-    dqn_save_name = "dqn_agent_torch.pt" if use_torch else "dqn_agent.pt"
-    ppo_opponent_args = []
-    dqn_opponent_args = []
-    if use_torch:
-        common_opponent_args = [
-            "--agent-player-mode",
-            args.agent_player_mode,
-            "--mixed-self-prob",
-            str(args.mixed_self_prob),
-            "--mixed-heuristic-prob",
-            str(args.mixed_heuristic_prob),
-            "--mixed-random-prob",
-            str(args.mixed_random_prob),
-        ]
-        ppo_opponent_args = ["--opponent", args.ppo_opponent, *common_opponent_args]
-        dqn_opponent_args = ["--opponent", args.dqn_opponent, *common_opponent_args]
+    use_torchrl = args.neural_backend == "torchrl"
+    ppo_script = "train_torchrl_ppo.py" if use_torchrl else "train_torch_ppo.py"
+    dqn_script = "train_torch_dqn.py"
+    ppo_save_name = "super_ttt_agent_torchrl.pt" if use_torchrl else "super_ttt_agent_torch.pt"
+    dqn_save_name = "dqn_agent_torch.pt"
+    common_opponent_args = [
+        "--agent-player-mode",
+        args.agent_player_mode,
+        "--mixed-self-prob",
+        str(args.mixed_self_prob),
+        "--mixed-heuristic-prob",
+        str(args.mixed_heuristic_prob),
+        "--mixed-random-prob",
+        str(args.mixed_random_prob),
+    ]
+    ppo_opponent_args = ["--opponent", args.ppo_opponent, *common_opponent_args]
+    dqn_opponent_args = ["--opponent", args.dqn_opponent, *common_opponent_args]
 
     return [
         Job(
@@ -318,9 +282,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--neural-backend",
         type=str,
-        default="torch",
-        choices=["torch", "tf"],
-        help="Neural trainer backend for PPO/DQN. Default is PyTorch for reliable CUDA training.",
+        default="torchrl",
+        choices=["torch", "torchrl"],
+        help="PPO trainer backend. Default uses TorchRL env validation plus PyTorch PPO updates.",
     )
     parser.add_argument(
         "--neural-device",
@@ -394,13 +358,10 @@ def main() -> None:
         print("[gpu-check] neural-device=cpu; hiding GPUs for PPO/DQN")
         gpus = []
     elif gpus and not args.skip_gpu_check:
-        check_fn = torch_gpu_works if args.neural_backend == "torch" else tensorflow_gpu_works
-        working_gpus = [gpu for gpu in gpus if check_fn(gpu)]
+        working_gpus = [gpu for gpu in gpus if torch_gpu_works(gpu)]
         if not working_gpus:
-            print(
-                f"[gpu-check] No requested GPU passed the {args.neural_backend} kernel check."
-            )
-            if args.allow_cpu_fallback or args.neural_backend == "tf":
+            print("[gpu-check] No requested GPU passed the PyTorch kernel check.")
+            if args.allow_cpu_fallback:
                 print("[gpu-check] Falling back to CPU for PPO/DQN.")
             else:
                 raise SystemExit(

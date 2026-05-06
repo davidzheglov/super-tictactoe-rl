@@ -8,4 +8,6 @@ pandas==2.2.2
 matplotlib==3.8.4
 gymnasium==1.1.1
 tqdm>=4.66
+torchrl>=0.6
+tensordict>=0.6
 urllib3<2
