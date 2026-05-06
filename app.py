@@ -23,6 +23,7 @@ import tensorflow as tf
 
 try:
     from .board import BOARD_SIZE, VALID_LEVEL_POSITIONS
+    from .agents import HeuristicAgent
     from .env import SuperTicTacToeEnv
     from .models import PolicyValueNet, select_action
     from .utils import (
@@ -37,6 +38,7 @@ try:
     )
 except ImportError:  # pragma: no cover
     from board import BOARD_SIZE, VALID_LEVEL_POSITIONS
+    from agents import HeuristicAgent
     from env import SuperTicTacToeEnv
     from models import PolicyValueNet, select_action
     from utils import (
@@ -247,6 +249,8 @@ def agent_turn(state: GameState, model, device: str) -> None:
     action_mask = state.env.legal_action_mask()
     if model is None or not state.use_model:
         action = random_legal_action(action_mask, state.rng)
+    elif isinstance(model, LoadedAgent) and model.backend == "heuristic":
+        action = model.model.select_action(state.env)
     elif isinstance(model, LoadedAgent) and model.backend == "torch_ppo":
         try:
             from .torch_models import select_action_torch
@@ -448,6 +452,18 @@ def game_status(state: GameState, model) -> Tuple[str, Tuple[int, int, int]]:
     return f"Agent thinking ({player_name(state.env.current_player)})", ORANGE
 
 
+def agent_label(model, use_model: bool) -> str:
+    if model is None or not use_model:
+        return "random"
+    if isinstance(model, LoadedAgent) and model.backend == "heuristic":
+        return "heuristic"
+    if isinstance(model, LoadedAgent) and model.backend == "torch_dqn":
+        return "DQN"
+    if isinstance(model, LoadedAgent) and model.backend in {"torch_ppo", "tf_ppo"}:
+        return "PPO"
+    return "model"
+
+
 def make_buttons(state: GameState, model) -> List[Button]:
     x = PANEL_LEFT + 22
     y = 250
@@ -463,7 +479,7 @@ def make_buttons(state: GameState, model) -> List[Button]:
         ),
         Button(
             pygame.Rect(x, y + 2 * (height + gap), width, height),
-            f"Agent: {'model' if state.use_model and model is not None else 'random'}",
+            f"Agent: {agent_label(model, state.use_model)}",
             "toggle_model",
             enabled=model is not None,
         ),
@@ -490,7 +506,14 @@ def draw_panel(
 
     status, color = game_status(state, model)
     draw_text(surface, body_font, status, (PANEL_LEFT + 22, 54), color)
-    model_text = "Loaded checkpoint" if model is not None else "No checkpoint; random agent"
+    if isinstance(model, LoadedAgent) and model.backend == "heuristic" and state.use_model:
+        model_text = "Heuristic opponent"
+    elif model is not None and state.use_model:
+        model_text = "Loaded checkpoint"
+    elif model is not None:
+        model_text = "Agent toggled to random"
+    else:
+        model_text = "No checkpoint; random agent"
     draw_text(
         surface,
         small_font,
@@ -572,6 +595,12 @@ def handle_board_click(state: GameState, pos: Tuple[int, int]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Play Super Tic-Tac-Toe in Pygame.")
+    parser.add_argument(
+        "--agent",
+        choices=["model", "heuristic", "random"],
+        default="model",
+        help="Opponent type. Use heuristic to play against the rule-based baseline.",
+    )
     parser.add_argument("--model-path", type=str, default=str(DEFAULT_MODEL_PATH))
     parser.add_argument("--hidden-size", type=int, default=256)
     parser.add_argument("--human-player", choices=["X", "O"], default="X")
@@ -597,7 +626,10 @@ def main() -> None:
     )
 
     model = None
-    if not args.random_agent:
+    agent_kind = "random" if args.random_agent else args.agent
+    if agent_kind == "heuristic":
+        model = LoadedAgent("heuristic", HeuristicAgent(seed=args.seed), None)
+    elif agent_kind == "model":
         model = load_agent(args.model_path, args.hidden_size, args.device)
     device = resolve_tf_device(args.device)
 
@@ -605,7 +637,7 @@ def main() -> None:
         env=SuperTicTacToeEnv(seed=args.seed),
         human_player=1 if args.human_player == "X" else -1,
         deterministic=not args.sampling_agent,
-        use_model=model is not None and not args.random_agent,
+        use_model=model is not None and agent_kind != "random",
         rng=np.random.default_rng(args.seed),
     )
     state.env.reset(seed=args.seed)

@@ -133,6 +133,7 @@ random legal moves.
 Useful options:
 
 ```bash
+python app.py --agent heuristic
 python app.py --human-player O
 python app.py --model-path models/super_ttt_agent_torch.pt --sampling-agent
 python app.py --random-agent
