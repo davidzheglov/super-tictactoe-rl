@@ -1,9 +1,11 @@
 .venv/
+.venv-superpod/
 __pycache__/
 *.pyc
 .DS_Store
 
 runs/
+slurm_logs/
 models/*.pt*
 models/*.pkl
 models/*.csv

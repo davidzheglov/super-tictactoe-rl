@@ -1,0 +1,11 @@
+name	algo	seed	episodes	opponent	player_mode	mixed_self	mixed_heuristic	mixed_random	batch_or_size	lr	hidden_size	save_interval	log_interval	stop_after_seconds
+ppo_heuristic_3k_s0	ppo	0	3000	heuristic	alternate	0.0	1.0	0.0	16	0.0002	256	500	100	0
+ppo_mixed_3k_s0	ppo	0	3000	mixed	alternate	0.5	0.4	0.1	16	0.0002	256	500	100	0
+ppo_mixed_10k_s0	ppo	0	10000	mixed	alternate	0.5	0.4	0.1	32	0.0002	256	1000	250	0
+ppo_mixed_10k_s1	ppo	1	10000	mixed	alternate	0.5	0.4	0.1	32	0.0002	256	1000	250	0
+ppo_self_10k_s0	ppo	0	10000	self	alternate	1.0	0.0	0.0	32	0.0002	256	1000	250	0
+dqn_heuristic_5k_s0	dqn	0	5000	heuristic	alternate	0.0	1.0	0.0	512	0.0003	256	500	100	0
+dqn_mixed_5k_s0	dqn	0	5000	mixed	alternate	0.5	0.4	0.1	512	0.0003	256	500	100	0
+dqn_mixed_10k_s0	dqn	0	10000	mixed	alternate	0.5	0.4	0.1	512	0.0003	256	1000	250	0
+dqn_mixed_10k_s1	dqn	1	10000	mixed	alternate	0.5	0.4	0.1	512	0.0003	256	1000	250	0
+dqn_self_10k_s0	dqn	0	10000	self	alternate	1.0	0.0	0.0	512	0.0003	256	1000	250	0
