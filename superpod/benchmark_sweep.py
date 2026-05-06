@@ -19,10 +19,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agents import (  # noqa: E402
+    BasicHeuristicAgent,
     HeuristicAgent,
+    LineBuilderAgent,
     QTableAgent,
     RandomAgent,
-    RolloutMCTSAgent,
     TorchDQNAgent,
     TorchPPOAgent,
     evaluate_matchup,
@@ -117,8 +118,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--games", type=int, default=100)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="auto")
-    parser.add_argument("--mcts-rollouts", type=int, default=4)
-    parser.add_argument("--skip-mcts", action="store_true")
     return parser.parse_args()
 
 
@@ -130,17 +129,10 @@ def main() -> None:
 
     baselines = [
         RandomAgent(seed=args.seed + 1),
-        HeuristicAgent(seed=args.seed + 2),
+        BasicHeuristicAgent(seed=args.seed + 2),
+        LineBuilderAgent(seed=args.seed + 3),
+        HeuristicAgent(seed=args.seed + 4),
     ]
-    if not args.skip_mcts:
-        baselines.append(
-            RolloutMCTSAgent(
-                rollouts_per_action=args.mcts_rollouts,
-                seed=args.seed + 3,
-                max_steps=200,
-            )
-        )
-
     raw_rows: List[Dict[str, object]] = []
     summary_rows: List[Dict[str, object]] = []
     missing_rows: List[Dict[str, object]] = []
@@ -155,17 +147,6 @@ def main() -> None:
         raw_rows=raw_rows,
         summary_rows=summary_rows,
     )
-
-    if not args.skip_mcts:
-        add_matchup(
-            RolloutMCTSAgent(args.mcts_rollouts, seed=args.seed + 12),
-            HeuristicAgent(seed=args.seed + 13),
-            games=args.games,
-            seed=args.seed + 20_000,
-            context={"run_name": "baseline_mcts_vs_heuristic", "algo": "baseline"},
-            raw_rows=raw_rows,
-            summary_rows=summary_rows,
-        )
 
     seed_offset = 100_000
     neural_rows = read_tsv(ROOT / args.neural_config)

@@ -10,10 +10,11 @@ from typing import Dict, List
 
 try:
     from .agents import (
+        BasicHeuristicAgent,
         HeuristicAgent,
+        LineBuilderAgent,
         QTableAgent,
         RandomAgent,
-        RolloutMCTSAgent,
         TorchDQNAgent,
         TorchPPOAgent,
         evaluate_matchup,
@@ -21,10 +22,11 @@ try:
     from .utils import project_root, set_global_seeds
 except ImportError:  # pragma: no cover
     from agents import (
+        BasicHeuristicAgent,
         HeuristicAgent,
+        LineBuilderAgent,
         QTableAgent,
         RandomAgent,
-        RolloutMCTSAgent,
         TorchDQNAgent,
         TorchPPOAgent,
         evaluate_matchup,
@@ -48,12 +50,10 @@ def build_agent(name: str, args: argparse.Namespace, seed: int):
         return RandomAgent(seed=seed)
     if normalized == "heuristic":
         return HeuristicAgent(seed=seed)
-    if normalized == "mcts":
-        return RolloutMCTSAgent(
-            rollouts_per_action=args.mcts_rollouts,
-            seed=seed,
-            max_steps=args.mcts_max_steps,
-        )
+    if normalized in {"basic", "basic_heuristic"}:
+        return BasicHeuristicAgent(seed=seed)
+    if normalized in {"line", "line_builder"}:
+        return LineBuilderAgent(seed=seed)
     if normalized == "ppo":
         return TorchPPOAgent(args.ppo_path, device=args.device, deterministic=args.deterministic)
     if normalized == "dqn":
@@ -69,15 +69,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--agents",
         type=str,
-        default="random,heuristic,mcts",
-        help="Comma-separated list from random,heuristic,mcts,ppo,dqn,q.",
+        default="random,basic,line,heuristic",
+        help="Comma-separated list from random,basic,line,heuristic,ppo,dqn,q.",
     )
     parser.add_argument("--games", type=int, default=100)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--deterministic", action="store_true")
-    parser.add_argument("--mcts-rollouts", type=int, default=8)
-    parser.add_argument("--mcts-max-steps", type=int, default=200)
     parser.add_argument(
         "--ppo-path",
         type=str,

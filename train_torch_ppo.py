@@ -16,12 +16,12 @@ import torch
 from torch.distributions import Categorical
 
 try:
-    from .agents import HeuristicAgent, RandomAgent
+    from .agents import BasicHeuristicAgent, HeuristicAgent, LineBuilderAgent, RandomAgent, board_potential
     from .env import SuperTicTacToeEnv
     from .torch_models import TorchPolicyValueNet, mask_logits, resolve_torch_device, select_action_torch
     from .utils import hidden_sizes_from_arg, project_root, set_global_seeds
 except ImportError:  # pragma: no cover
-    from agents import HeuristicAgent, RandomAgent
+    from agents import BasicHeuristicAgent, HeuristicAgent, LineBuilderAgent, RandomAgent, board_potential
     from env import SuperTicTacToeEnv
     from torch_models import TorchPolicyValueNet, mask_logits, resolve_torch_device, select_action_torch
     from utils import hidden_sizes_from_arg, project_root, set_global_seeds
@@ -59,6 +59,12 @@ def run_episode(
     agent_player: int = 1,
     random_agent: Optional[RandomAgent] = None,
     heuristic_agent: Optional[HeuristicAgent] = None,
+    line_agent: Optional[LineBuilderAgent] = None,
+    basic_agent: Optional[BasicHeuristicAgent] = None,
+    shaping_scale: float = 0.03,
+    shaping_clip: float = 2.0,
+    shaping_defense_weight: float = 0.75,
+    forfeit_penalty: float = 0.02,
 ) -> Tuple[List[Transition], Dict[str, int]]:
     obs, _ = env.reset(seed=int(rng.integers(0, 2**31 - 1)))
     transitions: List[Transition] = []
@@ -72,6 +78,11 @@ def run_episode(
         player = env.current_player
         policy_turn = opponent == "self" or player == agent_player
         action_mask = env.legal_action_mask()
+        potential_before = (
+            board_potential(env.board, player, defense_weight=shaping_defense_weight)
+            if policy_turn and shaping_scale != 0.0
+            else 0.0
+        )
         if policy_turn:
             action, log_prob, value = select_action_torch(
                 model, obs, action_mask, device=device, deterministic=False
@@ -84,6 +95,14 @@ def run_episode(
             action = (random_agent or RandomAgent()).select_action(env)
             log_prob = 0.0
             value = 0.0
+        elif opponent == "line":
+            action = (line_agent or LineBuilderAgent()).select_action(env)
+            log_prob = 0.0
+            value = 0.0
+        elif opponent == "basic":
+            action = (basic_agent or BasicHeuristicAgent()).select_action(env)
+            log_prob = 0.0
+            value = 0.0
         else:
             raise ValueError(f"Unknown opponent mode: {opponent}")
         next_obs, _, terminated, truncated, info = env.step(action)
@@ -93,12 +112,23 @@ def run_episode(
         illegal += int(info["reason"] == "illegal_action")
         steps += 1
         if policy_turn:
+            dense_reward = 0.0
+            if shaping_scale != 0.0:
+                potential_after = board_potential(
+                    env.board,
+                    player,
+                    defense_weight=shaping_defense_weight,
+                )
+                delta = float(np.clip(potential_after - potential_before, -shaping_clip, shaping_clip))
+                dense_reward += shaping_scale * delta
+            if bool(info.get("forfeited", False)):
+                dense_reward -= forfeit_penalty
             transitions.append(
                 Transition(
                     obs=obs,
                     action=action,
                     log_prob=log_prob,
-                    reward=0.0,
+                    reward=dense_reward,
                     value=value,
                     action_mask=action_mask.astype(np.float32),
                     player=player,
@@ -108,7 +138,7 @@ def run_episode(
 
     rewards = outcome_rewards(transitions, winner, gamma)
     for transition, reward in zip(transitions, rewards):
-        transition.reward = float(reward)
+        transition.reward += float(reward)
 
     return transitions, {
         "winner": winner,
@@ -118,6 +148,8 @@ def run_episode(
         "illegal": illegal,
         "opponent_self": int(opponent == "self"),
         "opponent_heuristic": int(opponent == "heuristic"),
+        "opponent_line": int(opponent == "line"),
+        "opponent_basic": int(opponent == "basic"),
         "opponent_random": int(opponent == "random"),
     }
 
@@ -135,9 +167,15 @@ def choose_agent_player(mode: str, episode_index: int, rng: np.random.Generator)
 def choose_opponent(args: argparse.Namespace, rng: np.random.Generator) -> str:
     if args.opponent != "mixed":
         return args.opponent
-    labels = np.asarray(["self", "heuristic", "random"], dtype=object)
+    labels = np.asarray(["self", "heuristic", "line", "basic", "random"], dtype=object)
     probs = np.asarray(
-        [args.mixed_self_prob, args.mixed_heuristic_prob, args.mixed_random_prob],
+        [
+            args.mixed_self_prob,
+            args.mixed_heuristic_prob,
+            args.mixed_line_prob,
+            args.mixed_basic_prob,
+            args.mixed_random_prob,
+        ],
         dtype=np.float64,
     )
     probs = probs / max(float(np.sum(probs)), 1.0e-12)
@@ -282,7 +320,7 @@ def load_checkpoint(path: str, model: TorchPolicyValueNet, optimizer: torch.opti
 def parse_args() -> argparse.Namespace:
     root = project_root()
     parser = argparse.ArgumentParser(description="Train PyTorch PPO self-play agent.")
-    parser.add_argument("--episodes", type=int, default=300000)
+    parser.add_argument("--episodes", type=int, default=6000)
     parser.add_argument("--lr", type=float, default=2.0e-4)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--seed", type=int, default=0)
@@ -299,7 +337,7 @@ def parse_args() -> argparse.Namespace:
         "--opponent",
         type=str,
         default="self",
-        choices=["self", "random", "heuristic", "mixed"],
+        choices=["self", "random", "heuristic", "line", "basic", "mixed"],
     )
     parser.add_argument(
         "--agent-player-mode",
@@ -307,9 +345,15 @@ def parse_args() -> argparse.Namespace:
         default="alternate",
         choices=["alternate", "random", "x", "o"],
     )
-    parser.add_argument("--mixed-self-prob", type=float, default=0.5)
-    parser.add_argument("--mixed-heuristic-prob", type=float, default=0.4)
-    parser.add_argument("--mixed-random-prob", type=float, default=0.1)
+    parser.add_argument("--mixed-self-prob", type=float, default=0.2)
+    parser.add_argument("--mixed-heuristic-prob", type=float, default=0.45)
+    parser.add_argument("--mixed-line-prob", type=float, default=0.3)
+    parser.add_argument("--mixed-basic-prob", type=float, default=0.0)
+    parser.add_argument("--mixed-random-prob", type=float, default=0.05)
+    parser.add_argument("--shaping-scale", type=float, default=0.03)
+    parser.add_argument("--shaping-clip", type=float, default=2.0)
+    parser.add_argument("--shaping-defense-weight", type=float, default=0.75)
+    parser.add_argument("--forfeit-penalty", type=float, default=0.02)
     parser.add_argument("--log-interval", type=int, default=1000)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--save-interval", type=int, default=5000)
@@ -348,6 +392,8 @@ def main() -> None:
     env = SuperTicTacToeEnv(seed=args.seed)
     random_agent = RandomAgent(seed=args.seed + 17)
     heuristic_agent = HeuristicAgent(seed=args.seed + 29)
+    line_agent = LineBuilderAgent(seed=args.seed + 31)
+    basic_agent = BasicHeuristicAgent(seed=args.seed + 37)
     started_at = time.time()
     while total_episodes < args.episodes:
         episodes_to_collect = min(args.batch_episodes, args.episodes - total_episodes)
@@ -367,6 +413,12 @@ def main() -> None:
                 agent_player=agent_player,
                 random_agent=random_agent,
                 heuristic_agent=heuristic_agent,
+                line_agent=line_agent,
+                basic_agent=basic_agent,
+                shaping_scale=args.shaping_scale,
+                shaping_clip=args.shaping_clip,
+                shaping_defense_weight=args.shaping_defense_weight,
+                forfeit_penalty=args.forfeit_penalty,
             )
             collected.append(episode)
             stats.append(episode_stats)
@@ -402,6 +454,8 @@ def main() -> None:
                 "avg_forfeits": float(np.mean([item["forfeits"] for item in stats])),
                 "self_games": int(sum(item["opponent_self"] for item in stats)),
                 "heuristic_games": int(sum(item["opponent_heuristic"] for item in stats)),
+                "line_games": int(sum(item["opponent_line"] for item in stats)),
+                "basic_games": int(sum(item["opponent_basic"] for item in stats)),
                 "random_games": int(sum(item["opponent_random"] for item in stats)),
                 "loss": losses["loss"],
                 "policy_loss": losses["policy_loss"],
@@ -417,6 +471,7 @@ def main() -> None:
                 f"draws={winners.count(0)} avg_len={row['avg_length']:.1f} "
                 f"policy_steps={row['avg_policy_steps']:.1f} "
                 f"opp_self={row['self_games']} opp_heur={row['heuristic_games']} "
+                f"opp_line={row['line_games']} "
                 f"opp_rand={row['random_games']} "
                 f"loss={losses['loss']:.4f} entropy={losses['entropy']:.4f}"
             )

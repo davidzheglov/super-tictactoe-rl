@@ -15,12 +15,12 @@ import torch
 import torch.nn.functional as F
 
 try:
-    from .agents import HeuristicAgent, RandomAgent
+    from .agents import BasicHeuristicAgent, HeuristicAgent, LineBuilderAgent, RandomAgent, board_potential
     from .env import SuperTicTacToeEnv
     from .torch_models import TorchDQN, masked_q_argmax, resolve_torch_device
     from .utils import project_root, random_legal_action, set_global_seeds
 except ImportError:  # pragma: no cover
-    from agents import HeuristicAgent, RandomAgent
+    from agents import BasicHeuristicAgent, HeuristicAgent, LineBuilderAgent, RandomAgent, board_potential
     from env import SuperTicTacToeEnv
     from torch_models import TorchDQN, masked_q_argmax, resolve_torch_device
     from utils import project_root, random_legal_action, set_global_seeds
@@ -68,9 +68,15 @@ def choose_agent_player(mode: str, episode_index: int, rng: np.random.Generator)
 def choose_opponent(args: argparse.Namespace, rng: np.random.Generator) -> str:
     if args.opponent != "mixed":
         return args.opponent
-    labels = np.asarray(["self", "heuristic", "random"], dtype=object)
+    labels = np.asarray(["self", "heuristic", "line", "basic", "random"], dtype=object)
     probs = np.asarray(
-        [args.mixed_self_prob, args.mixed_heuristic_prob, args.mixed_random_prob],
+        [
+            args.mixed_self_prob,
+            args.mixed_heuristic_prob,
+            args.mixed_line_prob,
+            args.mixed_basic_prob,
+            args.mixed_random_prob,
+        ],
         dtype=np.float64,
     )
     probs = probs / max(float(np.sum(probs)), 1.0e-12)
@@ -95,9 +101,15 @@ def select_opponent_action(
     opponent: str,
     random_agent: RandomAgent,
     heuristic_agent: HeuristicAgent,
+    line_agent: LineBuilderAgent,
+    basic_agent: BasicHeuristicAgent,
 ) -> int:
     if opponent == "heuristic":
         return heuristic_agent.select_action(env)
+    if opponent == "line":
+        return line_agent.select_action(env)
+    if opponent == "basic":
+        return basic_agent.select_action(env)
     if opponent == "random":
         return random_agent.select_action(env)
     raise ValueError(f"Unknown non-self opponent mode: {opponent}")
@@ -163,7 +175,7 @@ def load_checkpoint(
 def parse_args() -> argparse.Namespace:
     root = project_root()
     parser = argparse.ArgumentParser(description="Train PyTorch DQN baseline.")
-    parser.add_argument("--episodes", type=int, default=150000)
+    parser.add_argument("--episodes", type=int, default=6000)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--lr", type=float, default=3.0e-4)
     parser.add_argument("--seed", type=int, default=0)
@@ -180,7 +192,7 @@ def parse_args() -> argparse.Namespace:
         "--opponent",
         type=str,
         default="self",
-        choices=["self", "random", "heuristic", "mixed"],
+        choices=["self", "random", "heuristic", "line", "basic", "mixed"],
     )
     parser.add_argument(
         "--agent-player-mode",
@@ -188,9 +200,15 @@ def parse_args() -> argparse.Namespace:
         default="alternate",
         choices=["alternate", "random", "x", "o"],
     )
-    parser.add_argument("--mixed-self-prob", type=float, default=0.5)
-    parser.add_argument("--mixed-heuristic-prob", type=float, default=0.4)
-    parser.add_argument("--mixed-random-prob", type=float, default=0.1)
+    parser.add_argument("--mixed-self-prob", type=float, default=0.2)
+    parser.add_argument("--mixed-heuristic-prob", type=float, default=0.45)
+    parser.add_argument("--mixed-line-prob", type=float, default=0.3)
+    parser.add_argument("--mixed-basic-prob", type=float, default=0.0)
+    parser.add_argument("--mixed-random-prob", type=float, default=0.05)
+    parser.add_argument("--shaping-scale", type=float, default=0.03)
+    parser.add_argument("--shaping-clip", type=float, default=2.0)
+    parser.add_argument("--shaping-defense-weight", type=float, default=0.75)
+    parser.add_argument("--forfeit-penalty", type=float, default=0.02)
     parser.add_argument("--save-path", type=str, default=str(root / "models" / "dqn_agent_torch.pt"))
     parser.add_argument("--log-csv", type=str, default=str(root / "models" / "dqn_torch_log.csv"))
     parser.add_argument("--save-interval", type=int, default=5000)
@@ -234,6 +252,8 @@ def main() -> None:
     env = SuperTicTacToeEnv(seed=args.seed)
     random_agent = RandomAgent(seed=args.seed + 17)
     heuristic_agent = HeuristicAgent(seed=args.seed + 29)
+    line_agent = LineBuilderAgent(seed=args.seed + 31)
+    basic_agent = BasicHeuristicAgent(seed=args.seed + 37)
     started_at = time.time()
 
     for episode in range(start_episode, args.episodes):
@@ -250,7 +270,14 @@ def main() -> None:
 
         while not done:
             if opponent != "self" and env.current_player != agent_player:
-                action = select_opponent_action(env, opponent, random_agent, heuristic_agent)
+                action = select_opponent_action(
+                    env,
+                    opponent,
+                    random_agent,
+                    heuristic_agent,
+                    line_agent,
+                    basic_agent,
+                )
                 obs, _, terminated, truncated, last_info = env.step(action)
                 done = bool(terminated or truncated)
                 forfeits += int(bool(last_info.get("forfeited", False)))
@@ -259,12 +286,32 @@ def main() -> None:
 
             mask = env.legal_action_mask()
             action = select_learning_action(online, obs, mask, epsilon, rng, device)
+            acting_player = int(env.current_player)
+            potential_before = (
+                board_potential(
+                    env.board,
+                    acting_player,
+                    defense_weight=args.shaping_defense_weight,
+                )
+                if args.shaping_scale != 0.0
+                else 0.0
+            )
 
             next_obs, reward, terminated, truncated, last_info = env.step(action)
             done = bool(terminated or truncated)
             forfeits += int(bool(last_info.get("forfeited", False)))
             steps += 1
             transition_reward = float(reward)
+            if args.shaping_scale != 0.0:
+                potential_after = board_potential(
+                    env.board,
+                    acting_player,
+                    defense_weight=args.shaping_defense_weight,
+                )
+                delta = float(np.clip(potential_after - potential_before, -args.shaping_clip, args.shaping_clip))
+                transition_reward += args.shaping_scale * delta
+            if bool(last_info.get("forfeited", False)):
+                transition_reward -= args.forfeit_penalty
             replay_next_obs = next_obs
             replay_done = done
             next_value_sign = -1.0
@@ -273,7 +320,12 @@ def main() -> None:
                 next_value_sign = 1.0
                 if not done:
                     opponent_action = select_opponent_action(
-                        env, opponent, random_agent, heuristic_agent
+                        env,
+                        opponent,
+                        random_agent,
+                        heuristic_agent,
+                        line_agent,
+                        basic_agent,
                     )
                     replay_next_obs, _, terminated, truncated, last_info = env.step(
                         opponent_action
@@ -349,6 +401,7 @@ def main() -> None:
                     "epsilon": epsilon,
                     "opponent": opponent,
                     "agent_player": agent_player,
+                    "shaping_scale": args.shaping_scale,
                     "replay_size": len(replay),
                 "loss": float(np.mean(losses)) if losses else np.nan,
                 "device": str(device),

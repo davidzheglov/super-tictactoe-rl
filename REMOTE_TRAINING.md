@@ -24,12 +24,14 @@ One command can run:
 
 The PyTorch PPO/DQN jobs use mixed opponent training by default:
 
-- 50% self-play
-- 40% heuristic opponent
-- 10% random opponent
+- 20% self-play
+- 45% smart heuristic opponent
+- 30% line-builder opponent
+- 5% random opponent
 
-Override this with `--ppo-opponent heuristic`, `--dqn-opponent heuristic`, or
-`--mixed-self-prob/--mixed-heuristic-prob/--mixed-random-prob`.
+Override this with `--ppo-opponent heuristic`, `--ppo-opponent line`, or the
+`--mixed-self-prob/--mixed-heuristic-prob/--mixed-line-prob/--mixed-random-prob`
+weights.
 
 Each trainer is resumable and cached:
 
@@ -127,6 +129,17 @@ python run_remote_training.py \
   --output-dir runs/heuristic_curriculum
 ```
 
+Pure line-builder curriculum:
+
+```bash
+python run_remote_training.py \
+  --neural-backend torchrl \
+  --gpus 0,1 \
+  --ppo-opponent line \
+  --dqn-opponent line \
+  --output-dir runs/line_curriculum
+```
+
 ## Useful Run Sizes
 
 Default overnight command:
@@ -137,21 +150,21 @@ python run_remote_training.py --gpus 0,1 --output-dir runs/overnight
 
 It runs:
 
-- PPO: 300,000 episodes
-- DQN: 150,000 episodes
-- Q-learning: 75,000 episodes
+- PPO: 6,000 episodes
+- DQN: 6,000 episodes
+- Q-learning: 15,000 episodes
 
-Longer PPO-focused run:
+Slightly longer PPO-focused run after the default benchmark looks promising:
 
 ```bash
 python run_remote_training.py \
   --only ppo \
   --gpus 1 \
-  --ppo-episodes 500000 \
-  --ppo-batch-episodes 64 \
+  --ppo-episodes 12000 \
+  --ppo-batch-episodes 32 \
   --ppo-minibatch-size 1024 \
   --ppo-lr 2e-4 \
-  --output-dir runs/ppo_500k
+  --output-dir runs/ppo_12k
 ```
 
 Smoke test:
@@ -199,9 +212,15 @@ Run cross-play benchmarks on the server:
 
 ```bash
 python benchmark.py \
-  --agents random,heuristic,mcts,ppo,dqn,q \
+  --agents random,basic,line,heuristic,ppo,dqn,q \
   --games 100 \
   --output-dir runs/overnight_torch/benchmark
+```
+
+Generate plots:
+
+```bash
+python analyze_training.py --run-dir runs/overnight
 ```
 
 The benchmark writes:

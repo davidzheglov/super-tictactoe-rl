@@ -33,7 +33,7 @@ if [[ -z "$line" ]]; then
   exit 2
 fi
 
-IFS=$'\t' read -r name seed episodes alpha gamma eps_start eps_end save_interval log_interval stop_after_seconds <<< "$line"
+IFS=$'\t' read -r name seed episodes alpha gamma eps_start eps_end save_interval log_interval shaping_scale shaping_clip shaping_defense_weight forfeit_penalty stop_after_seconds <<< "$line"
 
 out_dir="$RUN_ROOT/$SWEEP_NAME/$name"
 mkdir -p "$out_dir"
@@ -62,6 +62,10 @@ python train_qlearning.py \
   --done-file "$out_dir/q_learning.done" \
   --save-interval "$save_interval" \
   --log-interval "$log_interval" \
+  --shaping-scale "$shaping_scale" \
+  --shaping-clip "$shaping_clip" \
+  --shaping-defense-weight "$shaping_defense_weight" \
+  --forfeit-penalty "$forfeit_penalty" \
   --resume \
   --skip-if-done \
   "${stop_args[@]}"

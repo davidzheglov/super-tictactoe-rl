@@ -16,7 +16,7 @@ import pygame
 
 try:
     from .board import BOARD_SIZE, VALID_LEVEL_POSITIONS
-    from .agents import HeuristicAgent
+    from .agents import BasicHeuristicAgent, HeuristicAgent, LineBuilderAgent
     from .env import SuperTicTacToeEnv
     from .utils import (
         coord_label,
@@ -27,7 +27,7 @@ try:
     )
 except ImportError:  # pragma: no cover
     from board import BOARD_SIZE, VALID_LEVEL_POSITIONS
-    from agents import HeuristicAgent
+    from agents import BasicHeuristicAgent, HeuristicAgent, LineBuilderAgent
     from env import SuperTicTacToeEnv
     from utils import (
         coord_label,
@@ -231,7 +231,7 @@ def agent_turn(state: GameState, model) -> None:
     action_mask = state.env.legal_action_mask()
     if model is None or not state.use_model:
         action = random_legal_action(action_mask, state.rng)
-    elif isinstance(model, LoadedAgent) and model.backend == "heuristic":
+    elif isinstance(model, LoadedAgent) and model.backend in {"heuristic", "line", "basic"}:
         action = model.model.select_action(state.env)
     elif isinstance(model, LoadedAgent) and model.backend == "torch_ppo":
         try:
@@ -432,7 +432,11 @@ def agent_label(model, use_model: bool) -> str:
     if model is None or not use_model:
         return "random"
     if isinstance(model, LoadedAgent) and model.backend == "heuristic":
-        return "heuristic"
+        return "smart heuristic"
+    if isinstance(model, LoadedAgent) and model.backend == "line":
+        return "line builder"
+    if isinstance(model, LoadedAgent) and model.backend == "basic":
+        return "basic heuristic"
     if isinstance(model, LoadedAgent) and model.backend == "torch_dqn":
         return "DQN"
     if isinstance(model, LoadedAgent) and model.backend == "torch_ppo":
@@ -482,8 +486,8 @@ def draw_panel(
 
     status, color = game_status(state, model)
     draw_text(surface, body_font, status, (PANEL_LEFT + 22, 54), color)
-    if isinstance(model, LoadedAgent) and model.backend == "heuristic" and state.use_model:
-        model_text = "Heuristic opponent"
+    if isinstance(model, LoadedAgent) and model.backend in {"heuristic", "line", "basic"} and state.use_model:
+        model_text = f"{agent_label(model, True)} opponent"
     elif model is not None and state.use_model:
         model_text = "Loaded checkpoint"
     elif model is not None:
@@ -573,9 +577,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Play Super Tic-Tac-Toe in Pygame.")
     parser.add_argument(
         "--agent",
-        choices=["model", "heuristic", "random"],
+        choices=["model", "heuristic", "line", "basic", "random"],
         default="model",
-        help="Opponent type. Use heuristic to play against the rule-based baseline.",
+        help="Opponent type. Use heuristic for the smart rule-based baseline.",
     )
     parser.add_argument("--model-path", type=str, default=str(DEFAULT_MODEL_PATH))
     parser.add_argument("--hidden-size", type=int, default=256)
@@ -605,6 +609,10 @@ def main() -> None:
     agent_kind = "random" if args.random_agent else args.agent
     if agent_kind == "heuristic":
         model = LoadedAgent("heuristic", HeuristicAgent(seed=args.seed), None)
+    elif agent_kind == "line":
+        model = LoadedAgent("line", LineBuilderAgent(seed=args.seed), None)
+    elif agent_kind == "basic":
+        model = LoadedAgent("basic", BasicHeuristicAgent(seed=args.seed), None)
     elif agent_kind == "model":
         model = load_agent(args.model_path, args.hidden_size, args.device)
     state = GameState(

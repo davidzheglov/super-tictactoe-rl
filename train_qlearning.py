@@ -14,9 +14,11 @@ from typing import Dict
 import numpy as np
 
 try:
+    from .agents import board_potential
     from .env import SuperTicTacToeEnv
     from .utils import project_root, random_legal_action, set_global_seeds
 except ImportError:  # pragma: no cover
+    from agents import board_potential
     from env import SuperTicTacToeEnv
     from utils import project_root, random_legal_action, set_global_seeds
 
@@ -70,12 +72,16 @@ def append_csv_row(path: Path, row: Dict[str, object]) -> None:
 def parse_args() -> argparse.Namespace:
     root = project_root()
     parser = argparse.ArgumentParser(description="Train tabular Q-learning baseline.")
-    parser.add_argument("--episodes", type=int, default=50000)
+    parser.add_argument("--episodes", type=int, default=15000)
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--eps-start", type=float, default=0.9)
     parser.add_argument("--eps-end", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--shaping-scale", type=float, default=0.03)
+    parser.add_argument("--shaping-clip", type=float, default=2.0)
+    parser.add_argument("--shaping-defense-weight", type=float, default=0.75)
+    parser.add_argument("--forfeit-penalty", type=float, default=0.02)
     parser.add_argument("--save-path", type=str, default=str(root / "models" / "q_table.pkl"))
     parser.add_argument("--log-csv", type=str, default=str(root / "models" / "q_learning_log.csv"))
     parser.add_argument("--save-interval", type=int, default=5000)
@@ -131,17 +137,38 @@ def main() -> None:
                 q_values[~mask] = -1.0e9
                 action = int(np.argmax(q_values))
 
+            acting_player = int(env.current_player)
+            potential_before = (
+                board_potential(
+                    env.board,
+                    acting_player,
+                    defense_weight=args.shaping_defense_weight,
+                )
+                if args.shaping_scale != 0.0
+                else 0.0
+            )
             _, reward, terminated, truncated, last_info = env.step(action)
             done = bool(terminated or truncated)
             forfeits += int(bool(last_info.get("forfeited", False)))
+            shaped_reward = float(reward)
+            if args.shaping_scale != 0.0:
+                potential_after = board_potential(
+                    env.board,
+                    acting_player,
+                    defense_weight=args.shaping_defense_weight,
+                )
+                delta = float(np.clip(potential_after - potential_before, -args.shaping_clip, args.shaping_clip))
+                shaped_reward += args.shaping_scale * delta
+            if bool(last_info.get("forfeited", False)):
+                shaped_reward -= args.forfeit_penalty
             if done:
-                target = float(reward)
+                target = shaped_reward
             else:
                 next_key = state_key(env)
                 next_mask = env.legal_action_mask()
                 next_values = q_table[next_key].copy()
                 next_values[~next_mask] = -1.0e9
-                target = -args.gamma * float(np.max(next_values))
+                target = shaped_reward - args.gamma * float(np.max(next_values))
             q_table[key][action] += args.alpha * (target - q_table[key][action])
             steps += 1
 
@@ -155,6 +182,7 @@ def main() -> None:
                 "steps": steps,
                 "forfeits": forfeits,
                 "epsilon": epsilon,
+                "shaping_scale": args.shaping_scale,
                 "states": len(q_table),
                 "elapsed_seconds": time.time() - started_at,
             }

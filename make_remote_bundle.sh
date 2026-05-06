@@ -8,6 +8,8 @@ zip -r "$OUT" super_tictactoe_rl \
   -x "super_tictactoe_rl/.venv/*" \
   -x "super_tictactoe_rl/__pycache__/*" \
   -x "super_tictactoe_rl/*/__pycache__/*" \
+  -x "super_tictactoe_rl/tic-tac-toe/*" \
+  -x "super_tictactoe_rl/req.txt" \
   -x "super_tictactoe_rl/.DS_Store" \
   -x "super_tictactoe_rl/*/.DS_Store" \
   -x "super_tictactoe_rl/runs/*" \

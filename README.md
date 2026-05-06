@@ -74,9 +74,16 @@ plain PyTorch PPO baseline and a PyTorch DQN baseline. All neural trainers use
 legal-action masking and save resumable `.pt` checkpoints. The one-command
 remote runner uses mixed opponent training by default:
 
-- 50% self-play
-- 40% heuristic opponent
-- 10% random opponent
+- 20% self-play
+- 45% smart heuristic opponent
+- 30% line-builder opponent
+- 5% random opponent
+
+The smart heuristic scores all true winning windows and the stochastic landing
+distribution of each move, so it blocks intersections such as horizontal
+two-in-a-row plus vertical/diagonal threats. The line-builder is the aggressive
+baseline that mostly extends its own longest open line. See
+`HEURISTICS_AND_REWARD.md` for the exact rules and sparse-reward shaping.
 
 ```bash
 python train_torchrl_ppo.py --episodes 5000 --lr 3e-4 --device cuda
@@ -88,6 +95,7 @@ Train directly against the heuristic baseline:
 ```bash
 python train_torchrl_ppo.py --episodes 5000 --opponent heuristic --device cuda
 python train_torch_dqn.py --episodes 5000 --opponent heuristic --device cuda
+python train_torchrl_ppo.py --episodes 5000 --opponent line --device cuda
 ```
 
 Useful faster smoke test:
@@ -117,10 +125,16 @@ The model alternates between playing X and O against a random legal opponent.
 For cross-play benchmarking:
 
 ```bash
-python benchmark.py --agents random,heuristic,mcts --games 100
-python benchmark.py --agents random,heuristic,mcts,ppo,dqn --games 100 \
+python benchmark.py --agents random,basic,line,heuristic --games 100
+python benchmark.py --agents random,basic,line,heuristic,ppo,dqn --games 100 \
   --ppo-path runs/overnight_torch/ppo_seed0/super_ttt_agent_torchrl.pt \
   --dqn-path runs/overnight_torch/dqn_seed0/dqn_agent_torch.pt
+```
+
+Plot logs and benchmark outputs:
+
+```bash
+python analyze_training.py --run-dir runs/overnight_torch
 ```
 
 ## Play in Pygame
@@ -136,6 +150,7 @@ Useful options:
 
 ```bash
 python app.py --agent heuristic
+python app.py --agent line
 python app.py --human-player O
 python app.py --model-path models/super_ttt_agent_torchrl.pt --sampling-agent
 python app.py --random-agent
@@ -157,8 +172,9 @@ Keyboard shortcuts inside the window:
 - `train_torchrl_ppo.py`: TorchRL bonus-path PPO entrypoint.
 - `train_torch_ppo.py`: PyTorch PPO-style self-play training loop.
 - `train_torch_dqn.py`: PyTorch DQN baseline.
-- `agents.py`: random, heuristic, rollout-MCTS, Q-table, PPO, and DQN agents.
+- `agents.py`: random, smart heuristic, line-builder, Q-table, PPO, and DQN agents.
 - `benchmark.py`: pairwise cross-play benchmarks and CSV output.
+- `analyze_training.py`: training and benchmark plots for reports.
 - `evaluate.py`: model evaluation against random play.
 - `app.py`: Pygame human-vs-agent UI.
 - `utils.py`: shared checkpoint, seeding, and device helpers.

@@ -169,8 +169,20 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
         str(args.mixed_self_prob),
         "--mixed-heuristic-prob",
         str(args.mixed_heuristic_prob),
+        "--mixed-line-prob",
+        str(args.mixed_line_prob),
+        "--mixed-basic-prob",
+        str(args.mixed_basic_prob),
         "--mixed-random-prob",
         str(args.mixed_random_prob),
+        "--shaping-scale",
+        str(args.shaping_scale),
+        "--shaping-clip",
+        str(args.shaping_clip),
+        "--shaping-defense-weight",
+        str(args.shaping_defense_weight),
+        "--forfeit-penalty",
+        str(args.forfeit_penalty),
     ]
     ppo_opponent_args = ["--opponent", args.ppo_opponent, *common_opponent_args]
     dqn_opponent_args = ["--opponent", args.dqn_opponent, *common_opponent_args]
@@ -268,6 +280,14 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 str(args.q_save_interval),
                 "--log-interval",
                 str(args.log_interval),
+                "--shaping-scale",
+                str(args.shaping_scale),
+                "--shaping-clip",
+                str(args.shaping_clip),
+                "--shaping-defense-weight",
+                str(args.shaping_defense_weight),
+                "--forfeit-penalty",
+                str(args.forfeit_penalty),
                 *common,
                 *stop_args,
             ],
@@ -308,11 +328,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--force-tests", action="store_true")
     parser.add_argument("--skip-tests", action="store_true")
     parser.add_argument("--stop-after-seconds", type=float, default=0.0)
-    parser.add_argument("--save-interval", type=int, default=5000)
-    parser.add_argument("--q-save-interval", type=int, default=10000)
-    parser.add_argument("--log-interval", type=int, default=1000)
-    parser.add_argument("--ppo-episodes", type=int, default=300000)
-    parser.add_argument("--ppo-batch-episodes", type=int, default=64)
+    parser.add_argument("--save-interval", type=int, default=1000)
+    parser.add_argument("--q-save-interval", type=int, default=2500)
+    parser.add_argument("--log-interval", type=int, default=250)
+    parser.add_argument("--ppo-episodes", type=int, default=6000)
+    parser.add_argument("--ppo-batch-episodes", type=int, default=32)
     parser.add_argument("--ppo-update-epochs", type=int, default=4)
     parser.add_argument("--ppo-minibatch-size", type=int, default=1024)
     parser.add_argument("--ppo-lr", type=float, default=2.0e-4)
@@ -320,16 +340,16 @@ def parse_args() -> argparse.Namespace:
         "--ppo-opponent",
         type=str,
         default="mixed",
-        choices=["self", "random", "heuristic", "mixed"],
+        choices=["self", "random", "heuristic", "line", "basic", "mixed"],
     )
-    parser.add_argument("--dqn-episodes", type=int, default=150000)
+    parser.add_argument("--dqn-episodes", type=int, default=6000)
     parser.add_argument("--dqn-batch-size", type=int, default=512)
     parser.add_argument("--dqn-lr", type=float, default=3.0e-4)
     parser.add_argument(
         "--dqn-opponent",
         type=str,
         default="mixed",
-        choices=["self", "random", "heuristic", "mixed"],
+        choices=["self", "random", "heuristic", "line", "basic", "mixed"],
     )
     parser.add_argument(
         "--agent-player-mode",
@@ -337,10 +357,16 @@ def parse_args() -> argparse.Namespace:
         default="alternate",
         choices=["alternate", "random", "x", "o"],
     )
-    parser.add_argument("--mixed-self-prob", type=float, default=0.5)
-    parser.add_argument("--mixed-heuristic-prob", type=float, default=0.4)
-    parser.add_argument("--mixed-random-prob", type=float, default=0.1)
-    parser.add_argument("--q-episodes", type=int, default=75000)
+    parser.add_argument("--mixed-self-prob", type=float, default=0.2)
+    parser.add_argument("--mixed-heuristic-prob", type=float, default=0.45)
+    parser.add_argument("--mixed-line-prob", type=float, default=0.3)
+    parser.add_argument("--mixed-basic-prob", type=float, default=0.0)
+    parser.add_argument("--mixed-random-prob", type=float, default=0.05)
+    parser.add_argument("--shaping-scale", type=float, default=0.03)
+    parser.add_argument("--shaping-clip", type=float, default=2.0)
+    parser.add_argument("--shaping-defense-weight", type=float, default=0.75)
+    parser.add_argument("--forfeit-penalty", type=float, default=0.02)
+    parser.add_argument("--q-episodes", type=int, default=15000)
     return parser.parse_args()
 
 

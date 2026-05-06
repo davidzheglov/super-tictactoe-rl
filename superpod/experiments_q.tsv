@@ -1,4 +1,3 @@
-name	seed	episodes	alpha	gamma	eps_start	eps_end	save_interval	log_interval	stop_after_seconds
-q_self_10k_s0	0	10000	0.05	0.99	0.90	0.05	1000	250	0
-q_self_25k_s0	0	25000	0.05	0.99	0.90	0.05	2500	500	0
-q_self_25k_s1	1	25000	0.05	0.99	0.90	0.05	2500	500	0
+name	seed	episodes	alpha	gamma	eps_start	eps_end	save_interval	log_interval	shaping_scale	shaping_clip	shaping_defense_weight	forfeit_penalty	stop_after_seconds
+q_self_10k_s0	0	10000	0.05	0.99	0.90	0.05	1000	250	0.03	2.0	0.75	0.02	0
+q_self_15k_s1	1	15000	0.05	0.99	0.90	0.05	2500	500	0.03	2.0	0.75	0.02	0

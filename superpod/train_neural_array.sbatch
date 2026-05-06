@@ -33,7 +33,7 @@ if [[ -z "$line" ]]; then
   exit 2
 fi
 
-IFS=$'\t' read -r name algo seed episodes opponent player_mode mixed_self mixed_heuristic mixed_random batch_or_size lr hidden_size save_interval log_interval stop_after_seconds <<< "$line"
+IFS=$'\t' read -r name algo seed episodes opponent player_mode mixed_self mixed_heuristic mixed_line mixed_basic mixed_random batch_or_size lr hidden_size save_interval log_interval shaping_scale shaping_clip shaping_defense_weight forfeit_penalty stop_after_seconds <<< "$line"
 
 out_dir="$RUN_ROOT/$SWEEP_NAME/$name"
 mkdir -p "$out_dir"
@@ -71,7 +71,13 @@ if [[ "$algo" == "ppo" ]]; then
     --agent-player-mode "$player_mode" \
     --mixed-self-prob "$mixed_self" \
     --mixed-heuristic-prob "$mixed_heuristic" \
+    --mixed-line-prob "$mixed_line" \
+    --mixed-basic-prob "$mixed_basic" \
     --mixed-random-prob "$mixed_random" \
+    --shaping-scale "$shaping_scale" \
+    --shaping-clip "$shaping_clip" \
+    --shaping-defense-weight "$shaping_defense_weight" \
+    --forfeit-penalty "$forfeit_penalty" \
     --device auto \
     --seed "$seed" \
     --save-path "$out_dir/super_ttt_agent_torchrl.pt" \
@@ -92,7 +98,13 @@ elif [[ "$algo" == "dqn" ]]; then
     --agent-player-mode "$player_mode" \
     --mixed-self-prob "$mixed_self" \
     --mixed-heuristic-prob "$mixed_heuristic" \
+    --mixed-line-prob "$mixed_line" \
+    --mixed-basic-prob "$mixed_basic" \
     --mixed-random-prob "$mixed_random" \
+    --shaping-scale "$shaping_scale" \
+    --shaping-clip "$shaping_clip" \
+    --shaping-defense-weight "$shaping_defense_weight" \
+    --forfeit-penalty "$forfeit_penalty" \
     --device auto \
     --seed "$seed" \
     --save-path "$out_dir/dqn_agent_torch.pt" \

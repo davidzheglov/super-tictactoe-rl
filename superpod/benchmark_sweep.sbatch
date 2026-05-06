@@ -19,7 +19,6 @@ VENV_DIR="${VENV_DIR:-.venv-superpod}"
 NEURAL_CONFIG="${NEURAL_CONFIG:-superpod/experiments_neural.tsv}"
 Q_CONFIG="${Q_CONFIG:-superpod/experiments_q.tsv}"
 BENCH_GAMES="${BENCH_GAMES:-100}"
-MCTS_ROLLOUTS="${MCTS_ROLLOUTS:-4}"
 
 source "$VENV_DIR/bin/activate"
 
@@ -34,6 +33,5 @@ python superpod/benchmark_sweep.py \
   --neural-config "$NEURAL_CONFIG" \
   --q-config "$Q_CONFIG" \
   --games "$BENCH_GAMES" \
-  --mcts-rollouts "$MCTS_ROLLOUTS" \
   --device auto \
   --output-dir "$RUN_ROOT/$SWEEP_NAME/benchmarks"

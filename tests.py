@@ -42,6 +42,11 @@ except ImportError:  # pragma: no cover
 else:
     ENV_AVAILABLE = True
 
+try:
+    from .agents import board_potential, landing_distribution, winning_lines
+except ImportError:  # pragma: no cover
+    from agents import board_potential, landing_distribution, winning_lines
+
 
 class DirectRng:
     def random(self):
@@ -128,6 +133,28 @@ class BoardTests(unittest.TestCase):
         ]:
             board.place(coord, -1)
         self.assertEqual(board.check_winner(), -1)
+
+    def test_winning_line_catalog_has_all_rule_types(self):
+        kinds = {line.kind for line in winning_lines()}
+        self.assertIn("horizontal", kinds)
+        self.assertIn("vertical", kinds)
+        self.assertIn("diagonal", kinds)
+
+    def test_landing_distribution_tracks_forfeit_risk(self):
+        board = SuperTicTacToeBoard()
+        action = board.coord_to_action((0, 0, 0, 0))
+        outcomes, forfeit_prob = landing_distribution(board, action)
+        self.assertAlmostEqual(outcomes[(0, 0, 0, 0)], 0.5)
+        self.assertAlmostEqual(sum(outcomes.values()), 0.5 + 3.0 / 16.0)
+        self.assertAlmostEqual(forfeit_prob, 5.0 / 16.0)
+
+    def test_board_potential_rewards_extending_open_lines(self):
+        board = SuperTicTacToeBoard()
+        before = board_potential(board, 1)
+        board.place((1, 0, 2, 0), 1)
+        board.place((1, 0, 2, 1), 1)
+        after = board_potential(board, 1)
+        self.assertGreater(after, before)
 
 
 @unittest.skipUnless(ENV_AVAILABLE, "gymnasium is not installed")

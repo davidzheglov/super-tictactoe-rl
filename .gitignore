@@ -1,5 +1,6 @@
 .venv/
 .venv-superpod/
+tic-tac-toe/
 __pycache__/
 *.pyc
 .DS_Store
