@@ -115,6 +115,49 @@ def select_opponent_action(
     raise ValueError(f"Unknown non-self opponent mode: {opponent}")
 
 
+def choose_start_actor(mode: str, rng: np.random.Generator) -> str:
+    if mode != "mixed":
+        return mode
+    labels = np.asarray(["heuristic", "line", "random"], dtype=object)
+    probs = np.asarray([0.55, 0.30, 0.15], dtype=np.float64)
+    return str(rng.choice(labels, p=probs))
+
+
+def reset_with_start_state(
+    env: SuperTicTacToeEnv,
+    rng: np.random.Generator,
+    start_state_mode: str,
+    min_plies: int,
+    max_plies: int,
+    random_agent: RandomAgent,
+    heuristic_agent: HeuristicAgent,
+    line_agent: LineBuilderAgent,
+    basic_agent: BasicHeuristicAgent,
+) -> np.ndarray:
+    obs, _ = env.reset(seed=int(rng.integers(0, 2**31 - 1)))
+    if start_state_mode == "none" or max_plies <= 0:
+        return obs
+
+    low = max(0, int(min_plies))
+    high = max(low, int(max_plies))
+    plies = int(rng.integers(low, high + 1)) if high > 0 else 0
+    for _ in range(plies):
+        actor = choose_start_actor(start_state_mode, rng)
+        action = select_opponent_action(
+            env,
+            actor if actor != "mixed" else "heuristic",
+            random_agent,
+            heuristic_agent,
+            line_agent,
+            basic_agent,
+        )
+        obs, _, terminated, truncated, _ = env.step(action)
+        if terminated or truncated:
+            obs, _ = env.reset(seed=int(rng.integers(0, 2**31 - 1)))
+            break
+    return obs
+
+
 def save_checkpoint(
     path: str,
     online: TorchDQN,
@@ -172,6 +215,21 @@ def load_checkpoint(
     return int(payload.get("episodes", 0))
 
 
+def save_numbered_checkpoint(
+    checkpoint_dir: str,
+    online: TorchDQN,
+    target: TorchDQN,
+    optimizer: torch.optim.Optimizer,
+    episodes: int,
+    args: argparse.Namespace,
+    extra: Optional[Dict[str, object]] = None,
+) -> None:
+    if not checkpoint_dir:
+        return
+    path = Path(checkpoint_dir) / f"dqn_ep{int(episodes):07d}.pt"
+    save_checkpoint(str(path), online, target, optimizer, episodes, args, extra=extra)
+
+
 def parse_args() -> argparse.Namespace:
     root = project_root()
     parser = argparse.ArgumentParser(description="Train PyTorch DQN baseline.")
@@ -180,6 +238,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=3.0e-4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda", "gpu", "mps"])
+    parser.add_argument(
+        "--placement-mode",
+        type=str,
+        default="stochastic",
+        choices=["stochastic", "deterministic"],
+    )
     parser.add_argument("--hidden-size", type=int, default=256)
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--replay-size", type=int, default=200000)
@@ -209,8 +273,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shaping-clip", type=float, default=2.0)
     parser.add_argument("--shaping-defense-weight", type=float, default=0.75)
     parser.add_argument("--forfeit-penalty", type=float, default=0.02)
+    parser.add_argument(
+        "--start-state-mode",
+        type=str,
+        default="none",
+        choices=["none", "random", "heuristic", "line", "basic", "mixed"],
+    )
+    parser.add_argument("--start-state-min-plies", type=int, default=4)
+    parser.add_argument("--start-state-max-plies", type=int, default=18)
     parser.add_argument("--save-path", type=str, default=str(root / "models" / "dqn_agent_torch.pt"))
     parser.add_argument("--log-csv", type=str, default=str(root / "models" / "dqn_torch_log.csv"))
+    parser.add_argument("--checkpoint-dir", type=str, default="")
     parser.add_argument("--save-interval", type=int, default=5000)
     parser.add_argument("--log-interval", type=int, default=1000)
     parser.add_argument("--resume", action="store_true")
@@ -249,7 +322,7 @@ def main() -> None:
         return
 
     replay = ReplayBuffer(args.replay_size, args.seed)
-    env = SuperTicTacToeEnv(seed=args.seed)
+    env = SuperTicTacToeEnv(seed=args.seed, placement_mode=args.placement_mode)
     random_agent = RandomAgent(seed=args.seed + 17)
     heuristic_agent = HeuristicAgent(seed=args.seed + 29)
     line_agent = LineBuilderAgent(seed=args.seed + 31)
@@ -261,7 +334,17 @@ def main() -> None:
         epsilon = args.eps_start + frac * (args.eps_end - args.eps_start)
         opponent = choose_opponent(args, rng)
         agent_player = choose_agent_player(args.agent_player_mode, episode, rng)
-        obs, _ = env.reset(seed=int(rng.integers(0, 2**31 - 1)))
+        obs = reset_with_start_state(
+            env,
+            rng,
+            args.start_state_mode,
+            args.start_state_min_plies,
+            args.start_state_max_plies,
+            random_agent,
+            heuristic_agent,
+            line_agent,
+            basic_agent,
+        )
         done = False
         steps = 0
         forfeits = 0
@@ -402,6 +485,8 @@ def main() -> None:
                     "opponent": opponent,
                     "agent_player": agent_player,
                     "shaping_scale": args.shaping_scale,
+                    "placement_mode": args.placement_mode,
+                    "start_state_mode": args.start_state_mode,
                     "replay_size": len(replay),
                 "loss": float(np.mean(losses)) if losses else np.nan,
                 "device": str(device),
@@ -416,10 +501,20 @@ def main() -> None:
             )
         if episode_num % args.save_interval == 0 or episode_num >= args.episodes:
             save_checkpoint(args.save_path, online, target, optimizer, episode_num, args)
+            save_numbered_checkpoint(args.checkpoint_dir, online, target, optimizer, episode_num, args)
             print(f"Saved PyTorch DQN checkpoint at episode {episode_num} to {args.save_path}")
         if args.stop_after_seconds > 0 and time.time() - started_at >= args.stop_after_seconds:
             save_checkpoint(
                 args.save_path,
+                online,
+                target,
+                optimizer,
+                episode_num,
+                args,
+                {"stopped_early": True},
+            )
+            save_numbered_checkpoint(
+                args.checkpoint_dir,
                 online,
                 target,
                 optimizer,
@@ -432,6 +527,15 @@ def main() -> None:
 
     save_checkpoint(
         args.save_path,
+        online,
+        target,
+        optimizer,
+        args.episodes,
+        args,
+        {"completed": True},
+    )
+    save_numbered_checkpoint(
+        args.checkpoint_dir,
         online,
         target,
         optimizer,

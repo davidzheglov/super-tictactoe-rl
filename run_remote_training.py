@@ -155,8 +155,10 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
         stop_args = ["--stop-after-seconds", str(args.stop_after_seconds)]
 
     ppo_dir = run_dir / "ppo_seed0"
+    ppo_det_dir = run_dir / "ppo_deterministic_seed0"
     dqn_dir = run_dir / "dqn_seed0"
     q_dir = run_dir / "q_learning_seed0"
+    bc_dir = run_dir / "behavior_clone_seed0"
     use_torchrl = args.neural_backend == "torchrl"
     ppo_script = "train_torchrl_ppo.py" if use_torchrl else "train_torch_ppo.py"
     dqn_script = "train_torch_dqn.py"
@@ -165,6 +167,8 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
     common_opponent_args = [
         "--agent-player-mode",
         args.agent_player_mode,
+        "--placement-mode",
+        args.placement_mode,
         "--mixed-self-prob",
         str(args.mixed_self_prob),
         "--mixed-heuristic-prob",
@@ -183,11 +187,70 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
         str(args.shaping_defense_weight),
         "--forfeit-penalty",
         str(args.forfeit_penalty),
+        "--start-state-mode",
+        args.start_state_mode,
+        "--start-state-min-plies",
+        str(args.start_state_min_plies),
+        "--start-state-max-plies",
+        str(args.start_state_max_plies),
     ]
+    ppo_extra_args = [
+        "--checkpoint-dir",
+        str(ppo_dir / "checkpoints"),
+    ]
+    ppo_init_checkpoint = args.ppo_init_checkpoint
+    if args.enable_behavior_clone and not ppo_init_checkpoint:
+        ppo_init_checkpoint = str(bc_dir / "behavior_clone_torchrl.pt")
+    if ppo_init_checkpoint:
+        ppo_extra_args.extend(["--init-checkpoint", ppo_init_checkpoint])
     ppo_opponent_args = ["--opponent", args.ppo_opponent, *common_opponent_args]
-    dqn_opponent_args = ["--opponent", args.dqn_opponent, *common_opponent_args]
+    dqn_opponent_args = [
+        "--opponent",
+        args.dqn_opponent,
+        *common_opponent_args,
+        "--checkpoint-dir",
+        str(dqn_dir / "checkpoints"),
+    ]
 
-    return [
+    jobs: List[Job] = []
+    if args.enable_behavior_clone:
+        jobs.append(
+            Job(
+                name="behavior_clone",
+                gpu=None,
+                log_path=logs / "behavior_clone.log",
+                done_file=bc_dir / "behavior_clone.done",
+                cmd=[
+                    py,
+                    str(ROOT / "train_behavior_clone.py"),
+                    "--samples",
+                    str(args.bc_samples),
+                    "--epochs",
+                    str(args.bc_epochs),
+                    "--batch-size",
+                    str(args.bc_batch_size),
+                    "--lr",
+                    str(args.bc_lr),
+                    "--teacher",
+                    args.bc_teacher,
+                    "--placement-mode",
+                    args.placement_mode,
+                    "--device",
+                    args.neural_device,
+                    "--seed",
+                    "0",
+                    "--save-path",
+                    str(bc_dir / "behavior_clone_torchrl.pt"),
+                    "--log-csv",
+                    str(bc_dir / "behavior_clone_log.csv"),
+                    "--done-file",
+                    str(bc_dir / "behavior_clone.done"),
+                    "--skip-if-done",
+                ],
+            )
+        )
+
+    jobs.append(
         Job(
             name="ppo",
             gpu=None,
@@ -207,6 +270,7 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 "--lr",
                 str(args.ppo_lr),
                 *ppo_opponent_args,
+                *ppo_extra_args,
                 "--device",
                 args.neural_device,
                 "--seed",
@@ -224,7 +288,76 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 *common,
                 *stop_args,
             ],
-        ),
+        )
+    )
+    if args.include_deterministic_ppo:
+        ppo_det_extra_args = [
+            "--opponent",
+            "heuristic",
+            "--agent-player-mode",
+            args.agent_player_mode,
+            "--placement-mode",
+            "deterministic",
+            "--shaping-scale",
+            str(args.shaping_scale),
+            "--shaping-clip",
+            str(args.shaping_clip),
+            "--shaping-defense-weight",
+            str(args.shaping_defense_weight),
+            "--forfeit-penalty",
+            "0.0",
+            "--start-state-mode",
+            args.start_state_mode,
+            "--start-state-min-plies",
+            str(args.start_state_min_plies),
+            "--start-state-max-plies",
+            str(args.start_state_max_plies),
+            "--checkpoint-dir",
+            str(ppo_det_dir / "checkpoints"),
+        ]
+        if ppo_init_checkpoint:
+            ppo_det_extra_args.extend(["--init-checkpoint", ppo_init_checkpoint])
+        jobs.append(
+            Job(
+                name="ppo_deterministic",
+                gpu=None,
+                log_path=logs / "ppo_deterministic.log",
+                done_file=ppo_det_dir / "ppo_deterministic.done",
+                cmd=[
+                    py,
+                    str(ROOT / ppo_script),
+                    "--episodes",
+                    str(args.deterministic_ppo_episodes),
+                    "--batch-episodes",
+                    str(args.ppo_batch_episodes),
+                    "--update-epochs",
+                    str(args.ppo_update_epochs),
+                    "--minibatch-size",
+                    str(args.ppo_minibatch_size),
+                    "--lr",
+                    str(args.ppo_lr),
+                    *ppo_det_extra_args,
+                    "--device",
+                    args.neural_device,
+                    "--seed",
+                    "0",
+                    "--save-path",
+                    str(ppo_det_dir / ppo_save_name),
+                    "--log-csv",
+                    str(ppo_det_dir / "ppo_log.csv"),
+                    "--done-file",
+                    str(ppo_det_dir / "ppo_deterministic.done"),
+                    "--save-interval",
+                    str(args.save_interval),
+                    "--log-interval",
+                    str(args.log_interval),
+                    *common,
+                    *stop_args,
+                ],
+            )
+        )
+    jobs.extend(
+        [
         Job(
             name="dqn",
             gpu=None,
@@ -292,7 +425,9 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 *stop_args,
             ],
         ),
-    ]
+        ]
+    )
+    return jobs
 
 
 def parse_args() -> argparse.Namespace:
@@ -336,6 +471,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ppo-update-epochs", type=int, default=4)
     parser.add_argument("--ppo-minibatch-size", type=int, default=1024)
     parser.add_argument("--ppo-lr", type=float, default=2.0e-4)
+    parser.add_argument("--ppo-init-checkpoint", type=str, default="")
+    parser.add_argument("--enable-behavior-clone", action="store_true")
+    parser.add_argument("--bc-samples", type=int, default=200000)
+    parser.add_argument("--bc-epochs", type=int, default=8)
+    parser.add_argument("--bc-batch-size", type=int, default=2048)
+    parser.add_argument("--bc-lr", type=float, default=1.0e-3)
+    parser.add_argument("--bc-teacher", type=str, default="mixed", choices=["heuristic", "line", "basic", "mixed"])
+    parser.add_argument("--include-deterministic-ppo", action="store_true")
+    parser.add_argument("--deterministic-ppo-episodes", type=int, default=48000)
     parser.add_argument(
         "--ppo-opponent",
         type=str,
@@ -362,6 +506,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mixed-line-prob", type=float, default=0.3)
     parser.add_argument("--mixed-basic-prob", type=float, default=0.0)
     parser.add_argument("--mixed-random-prob", type=float, default=0.05)
+    parser.add_argument("--placement-mode", type=str, default="stochastic", choices=["stochastic", "deterministic"])
+    parser.add_argument(
+        "--start-state-mode",
+        type=str,
+        default="mixed",
+        choices=["none", "random", "heuristic", "line", "basic", "mixed"],
+    )
+    parser.add_argument("--start-state-min-plies", type=int, default=4)
+    parser.add_argument("--start-state-max-plies", type=int, default=18)
     parser.add_argument("--shaping-scale", type=float, default=0.03)
     parser.add_argument("--shaping-clip", type=float, default=2.0)
     parser.add_argument("--shaping-defense-weight", type=float, default=0.75)
@@ -378,6 +531,10 @@ def main() -> None:
         run_tests_once(run_dir / ".cache", force=args.force_tests)
 
     requested = {"ppo", "dqn", "q_learning"} if args.only == "all" else set(args.only.split(","))
+    if args.enable_behavior_clone:
+        requested.add("behavior_clone")
+    if args.include_deterministic_ppo:
+        requested.add("ppo_deterministic")
     jobs = [job for job in make_jobs(args) if job.name in requested]
     gpus = [g.strip() for g in args.gpus.split(",") if g.strip()]
     if args.neural_device == "cpu":
@@ -396,10 +553,23 @@ def main() -> None:
                 )
         gpus = working_gpus
 
-    gpu_jobs = [job for job in jobs if job.name in {"ppo", "dqn"}]
-    cpu_jobs = [job for job in jobs if job.name not in {"ppo", "dqn"}]
+    setup_jobs = [job for job in jobs if job.name == "behavior_clone"]
+    gpu_jobs = [job for job in jobs if job.name in {"ppo", "ppo_deterministic", "dqn"}]
+    cpu_jobs = [job for job in jobs if job.name not in {"ppo", "ppo_deterministic", "dqn", "behavior_clone"}]
     for i, job in enumerate(gpu_jobs):
         job.gpu = gpus[i % len(gpus)] if gpus else None
+
+    if setup_jobs:
+        setup_processes: Dict[str, subprocess.Popen] = {}
+        for job in setup_jobs:
+            job.gpu = gpus[0] if gpus else None
+            proc = launch_job(job, dry_run=args.dry_run)
+            if proc is not None:
+                setup_processes[job.name] = proc
+        if args.dry_run:
+            pass
+        else:
+            wait_processes(setup_processes)
 
     cpu_processes: Dict[str, subprocess.Popen] = {}
     for job in cpu_jobs:

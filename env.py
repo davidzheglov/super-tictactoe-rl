@@ -27,11 +27,19 @@ class SuperTicTacToeEnv(gym.Env):
 
     metadata = {"render_modes": ["human", "ansi"]}
 
-    def __init__(self, seed: Optional[int] = None, render_mode: Optional[str] = None):
+    def __init__(
+        self,
+        seed: Optional[int] = None,
+        render_mode: Optional[str] = None,
+        placement_mode: str = "stochastic",
+    ):
         super().__init__()
+        if placement_mode not in {"stochastic", "deterministic"}:
+            raise ValueError("placement_mode must be 'stochastic' or 'deterministic'.")
         self.board = SuperTicTacToeBoard()
         self.current_player = 1
         self.render_mode = render_mode
+        self.placement_mode = placement_mode
         self.rng = np.random.default_rng(seed)
         self.action_space = spaces.Discrete(len(all_playable_coords()))
         self.observation_space = spaces.Box(
@@ -77,7 +85,17 @@ class SuperTicTacToeEnv(gym.Env):
             forfeited = True
             reason = "illegal_action"
         else:
-            move_info = self.board.resolve_move(coord, current_player_before_move, self.rng)
+            if self.placement_mode == "deterministic":
+                self.board.place(coord, current_player_before_move)
+                move_info = {
+                    "intended_coord": coord,
+                    "actual_coord": coord,
+                    "accepted_directly": True,
+                    "forfeited": False,
+                    "reason": "deterministic",
+                }
+            else:
+                move_info = self.board.resolve_move(coord, current_player_before_move, self.rng)
             intended_coord = move_info["intended_coord"]
             actual_coord = move_info["actual_coord"]
             accepted_directly = bool(move_info["accepted_directly"])

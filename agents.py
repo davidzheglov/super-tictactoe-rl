@@ -41,7 +41,7 @@ class Agent(Protocol):
 
 
 def clone_env(env: SuperTicTacToeEnv, seed: Optional[int] = None) -> SuperTicTacToeEnv:
-    cloned = SuperTicTacToeEnv(seed=seed)
+    cloned = SuperTicTacToeEnv(seed=seed, placement_mode=getattr(env, "placement_mode", "stochastic"))
     cloned.board = env.board.copy()
     cloned.current_player = int(env.current_player)
     if seed is None:

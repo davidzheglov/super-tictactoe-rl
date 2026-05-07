@@ -172,9 +172,13 @@ Keyboard shortcuts inside the window:
 - `train_torchrl_ppo.py`: TorchRL bonus-path PPO entrypoint.
 - `train_torch_ppo.py`: PyTorch PPO-style self-play training loop.
 - `train_torch_dqn.py`: PyTorch DQN baseline.
+- `train_behavior_clone.py`: heuristic/line-builder imitation warm start for PPO.
 - `agents.py`: random, smart heuristic, line-builder, Q-table, PPO, and DQN agents.
 - `benchmark.py`: pairwise cross-play benchmarks and CSV output.
+- `benchmark_checkpoints.py`: benchmark numbered checkpoints to select the best model.
 - `analyze_training.py`: training and benchmark plots for reports.
+- `REPORT_RESULTS.md`: saved benchmark observations for the report narrative.
+- `RESEARCH_TRAINING_PLAN.md`: the long-run behavior-cloning and PPO curriculum plan.
 - `evaluate.py`: model evaluation against random play.
 - `app.py`: Pygame human-vs-agent UI.
 - `utils.py`: shared checkpoint, seeding, and device helpers.

@@ -65,8 +65,21 @@ def run_episode(
     shaping_clip: float = 2.0,
     shaping_defense_weight: float = 0.75,
     forfeit_penalty: float = 0.02,
+    start_state_mode: str = "none",
+    start_state_min_plies: int = 4,
+    start_state_max_plies: int = 18,
 ) -> Tuple[List[Transition], Dict[str, int]]:
-    obs, _ = env.reset(seed=int(rng.integers(0, 2**31 - 1)))
+    obs = reset_with_start_state(
+        env,
+        rng,
+        start_state_mode,
+        start_state_min_plies,
+        start_state_max_plies,
+        random_agent or RandomAgent(),
+        heuristic_agent or HeuristicAgent(),
+        line_agent or LineBuilderAgent(),
+        basic_agent or BasicHeuristicAgent(),
+    )
     transitions: List[Transition] = []
     done = False
     winner = 0
@@ -180,6 +193,68 @@ def choose_opponent(args: argparse.Namespace, rng: np.random.Generator) -> str:
     )
     probs = probs / max(float(np.sum(probs)), 1.0e-12)
     return str(rng.choice(labels, p=probs))
+
+
+def choose_start_actor(mode: str, rng: np.random.Generator) -> str:
+    if mode != "mixed":
+        return mode
+    labels = np.asarray(["heuristic", "line", "random"], dtype=object)
+    probs = np.asarray([0.55, 0.30, 0.15], dtype=np.float64)
+    return str(rng.choice(labels, p=probs))
+
+
+def select_scripted_action(
+    env: SuperTicTacToeEnv,
+    actor: str,
+    rng: np.random.Generator,
+    random_agent: RandomAgent,
+    heuristic_agent: HeuristicAgent,
+    line_agent: LineBuilderAgent,
+    basic_agent: BasicHeuristicAgent,
+) -> int:
+    if actor == "heuristic":
+        return heuristic_agent.select_action(env)
+    if actor == "line":
+        return line_agent.select_action(env)
+    if actor == "basic":
+        return basic_agent.select_action(env)
+    return random_agent.select_action(env)
+
+
+def reset_with_start_state(
+    env: SuperTicTacToeEnv,
+    rng: np.random.Generator,
+    start_state_mode: str,
+    min_plies: int,
+    max_plies: int,
+    random_agent: RandomAgent,
+    heuristic_agent: HeuristicAgent,
+    line_agent: LineBuilderAgent,
+    basic_agent: BasicHeuristicAgent,
+) -> np.ndarray:
+    obs, _ = env.reset(seed=int(rng.integers(0, 2**31 - 1)))
+    if start_state_mode == "none" or max_plies <= 0:
+        return obs
+
+    low = max(0, int(min_plies))
+    high = max(low, int(max_plies))
+    plies = int(rng.integers(low, high + 1)) if high > 0 else 0
+    for _ in range(plies):
+        actor = choose_start_actor(start_state_mode, rng)
+        action = select_scripted_action(
+            env,
+            actor,
+            rng,
+            random_agent,
+            heuristic_agent,
+            line_agent,
+            basic_agent,
+        )
+        obs, _, terminated, truncated, _ = env.step(action)
+        if terminated or truncated:
+            obs, _ = env.reset(seed=int(rng.integers(0, 2**31 - 1)))
+            break
+    return obs
 
 
 def batch_from_episodes(episodes: List[List[Transition]]) -> Dict[str, np.ndarray]:
@@ -317,6 +392,31 @@ def load_checkpoint(path: str, model: TorchPolicyValueNet, optimizer: torch.opti
     return int(payload.get("episodes", 0))
 
 
+def load_model_weights(path: str, model: TorchPolicyValueNet, device: torch.device) -> None:
+    if not path:
+        return
+    checkpoint = Path(path)
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"Initial checkpoint does not exist: {checkpoint}")
+    payload = torch.load(checkpoint, map_location=device)
+    model.load_state_dict(payload["model_state_dict"])
+    print(f"Loaded initial policy weights from {checkpoint}")
+
+
+def save_numbered_checkpoint(
+    checkpoint_dir: str,
+    model: TorchPolicyValueNet,
+    optimizer: torch.optim.Optimizer,
+    episodes: int,
+    args: argparse.Namespace,
+    extra: Optional[Dict[str, object]] = None,
+) -> None:
+    if not checkpoint_dir:
+        return
+    path = Path(checkpoint_dir) / f"ppo_ep{int(episodes):07d}.pt"
+    save_checkpoint(str(path), model, optimizer, episodes, args, extra=extra)
+
+
 def parse_args() -> argparse.Namespace:
     root = project_root()
     parser = argparse.ArgumentParser(description="Train PyTorch PPO self-play agent.")
@@ -326,6 +426,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save-path", type=str, default=str(root / "models" / "super_ttt_agent_torch.pt"))
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda", "gpu", "mps"])
+    parser.add_argument(
+        "--placement-mode",
+        type=str,
+        default="stochastic",
+        choices=["stochastic", "deterministic"],
+    )
     parser.add_argument("--hidden-size", type=int, default=256)
     parser.add_argument("--batch-episodes", type=int, default=64)
     parser.add_argument("--update-epochs", type=int, default=4)
@@ -354,6 +460,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--shaping-clip", type=float, default=2.0)
     parser.add_argument("--shaping-defense-weight", type=float, default=0.75)
     parser.add_argument("--forfeit-penalty", type=float, default=0.02)
+    parser.add_argument(
+        "--start-state-mode",
+        type=str,
+        default="none",
+        choices=["none", "random", "heuristic", "line", "basic", "mixed"],
+        help="Optionally begin training episodes from scripted mid-game states.",
+    )
+    parser.add_argument("--start-state-min-plies", type=int, default=4)
+    parser.add_argument("--start-state-max-plies", type=int, default=18)
+    parser.add_argument("--init-checkpoint", type=str, default="")
+    parser.add_argument("--checkpoint-dir", type=str, default="")
     parser.add_argument("--log-interval", type=int, default=1000)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--save-interval", type=int, default=5000)
@@ -383,13 +500,15 @@ def main() -> None:
         total_episodes = load_checkpoint(args.save_path, model, optimizer, device)
         if total_episodes:
             print(f"Resumed PyTorch PPO checkpoint {args.save_path} at episode {total_episodes}")
+    if args.init_checkpoint and total_episodes == 0:
+        load_model_weights(args.init_checkpoint, model, device)
     if args.skip_if_done and total_episodes >= args.episodes:
         done_file.parent.mkdir(parents=True, exist_ok=True)
         done_file.write_text("done\n", encoding="utf-8")
         print(f"PyTorch PPO already has {total_episodes} episodes; skipping.")
         return
 
-    env = SuperTicTacToeEnv(seed=args.seed)
+    env = SuperTicTacToeEnv(seed=args.seed, placement_mode=args.placement_mode)
     random_agent = RandomAgent(seed=args.seed + 17)
     heuristic_agent = HeuristicAgent(seed=args.seed + 29)
     line_agent = LineBuilderAgent(seed=args.seed + 31)
@@ -419,6 +538,9 @@ def main() -> None:
                 shaping_clip=args.shaping_clip,
                 shaping_defense_weight=args.shaping_defense_weight,
                 forfeit_penalty=args.forfeit_penalty,
+                start_state_mode=args.start_state_mode,
+                start_state_min_plies=args.start_state_min_plies,
+                start_state_max_plies=args.start_state_max_plies,
             )
             collected.append(episode)
             stats.append(episode_stats)
@@ -462,6 +584,8 @@ def main() -> None:
                 "value_loss": losses["value_loss"],
                 "entropy": losses["entropy"],
                 "device": str(device),
+                "placement_mode": args.placement_mode,
+                "start_state_mode": args.start_state_mode,
                 "elapsed_seconds": time.time() - started_at,
             }
             append_csv_row(args.log_csv, row)
@@ -480,6 +604,7 @@ def main() -> None:
             total_episodes % args.save_interval == 0 or total_episodes >= args.episodes
         ):
             save_checkpoint(args.save_path, model, optimizer, total_episodes, args)
+            save_numbered_checkpoint(args.checkpoint_dir, model, optimizer, total_episodes, args)
             print(f"Saved PyTorch PPO checkpoint at episode {total_episodes} to {args.save_path}")
 
         if args.stop_after_seconds > 0 and time.time() - started_at >= args.stop_after_seconds:
@@ -491,10 +616,26 @@ def main() -> None:
                 args,
                 extra={"stopped_early": True},
             )
+            save_numbered_checkpoint(
+                args.checkpoint_dir,
+                model,
+                optimizer,
+                total_episodes,
+                args,
+                extra={"stopped_early": True},
+            )
             print(f"Stopping early; saved PyTorch PPO at episode {total_episodes}.")
             return
 
     save_checkpoint(args.save_path, model, optimizer, total_episodes, args, extra={"completed": True})
+    save_numbered_checkpoint(
+        args.checkpoint_dir,
+        model,
+        optimizer,
+        total_episodes,
+        args,
+        extra={"completed": True},
+    )
     done_file.parent.mkdir(parents=True, exist_ok=True)
     done_file.write_text(f"completed episodes={total_episodes} path={args.save_path}\n", encoding="utf-8")
     print(f"PyTorch PPO completed: {args.save_path}")

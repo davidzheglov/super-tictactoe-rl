@@ -184,6 +184,17 @@ class EnvironmentTests(unittest.TestCase):
         env.step(action)
         self.assertFalse(env.legal_action_mask()[action])
 
+    def test_deterministic_placement_ignores_redirect_rng(self):
+        env = SuperTicTacToeEnv(seed=123, placement_mode="deterministic")
+        env.reset()
+        env.rng = RedirectOutRng()
+        action = env.board.coord_to_action((0, 0, 0, 0))
+        _, _, terminated, _, info = env.step(action)
+        self.assertFalse(terminated)
+        self.assertFalse(info["forfeited"])
+        self.assertEqual(info["reason"], "deterministic")
+        self.assertEqual(env.board.grid[0, 0, 0, 0], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
