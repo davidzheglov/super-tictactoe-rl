@@ -154,6 +154,12 @@ python app.py --agent line
 python app.py --human-player O
 python app.py --model-path models/super_ttt_agent_torchrl.pt --sampling-agent
 python app.py --random-agent
+python app.py \
+  --simulate \
+  --sim-x heuristic \
+  --sim-o model \
+  --sim-o-model-path runs/research_bc_ppo_72k/ppo_seed0/super_ttt_agent_torchrl.pt \
+  --device cpu
 ```
 
 Keyboard shortcuts inside the window:
@@ -161,6 +167,7 @@ Keyboard shortcuts inside the window:
 - `N`: new game
 - `S`: switch side
 - `G`: toggle greedy/sampling policy
+- `A`: toggle heuristic/model simulation
 - `Esc` or `Q`: quit
 
 ## Files
@@ -179,7 +186,8 @@ Keyboard shortcuts inside the window:
 - `analyze_training.py`: training and benchmark plots for reports.
 - `REPORT_RESULTS.md`: saved benchmark observations for the report narrative.
 - `RESEARCH_TRAINING_PLAN.md`: the long-run behavior-cloning and PPO curriculum plan.
+- `FRIEND_TICTACTOE_PARAMETERS.md`: training parameters observed in the ignored reference folder.
 - `evaluate.py`: model evaluation against random play.
-- `app.py`: Pygame human-vs-agent UI.
+- `app.py`: Pygame human-vs-agent and visible simulation UI.
 - `utils.py`: shared checkpoint, seeding, and device helpers.
 - `tests.py`: unit tests for board rules and environment behavior.

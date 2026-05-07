@@ -99,6 +99,9 @@ class GameState:
     deterministic: bool
     use_model: bool
     rng: np.random.Generator
+    simulation: bool = False
+    sim_x_label: str = "X agent"
+    sim_o_label: str = "O agent"
     done: bool = False
     winner: int = 0
     messages: List[str] = field(default_factory=list)
@@ -192,8 +195,20 @@ def load_agent(model_path: str, hidden_size: int, device_arg: str):
     return None
 
 
+def build_agent(kind: str, model_path: str, hidden_size: int, device_arg: str, seed: int):
+    if kind == "heuristic":
+        return LoadedAgent("heuristic", HeuristicAgent(seed=seed), None)
+    if kind == "line":
+        return LoadedAgent("line", LineBuilderAgent(seed=seed), None)
+    if kind == "basic":
+        return LoadedAgent("basic", BasicHeuristicAgent(seed=seed), None)
+    if kind == "model":
+        return load_agent(model_path, hidden_size, device_arg)
+    return None
+
+
 def reset_state(state: GameState) -> None:
-    state.env = SuperTicTacToeEnv()
+    state.env = SuperTicTacToeEnv(placement_mode=state.env.placement_mode)
     state.env.reset()
     state.done = False
     state.winner = 0
@@ -227,9 +242,9 @@ def apply_action(state: GameState, action: int) -> None:
     del state.messages[8:]
 
 
-def agent_turn(state: GameState, model) -> None:
+def agent_turn(state: GameState, model, force_model: bool = False) -> None:
     action_mask = state.env.legal_action_mask()
-    if model is None or not state.use_model:
+    if model is None or (not force_model and not state.use_model):
         action = random_legal_action(action_mask, state.rng)
     elif isinstance(model, LoadedAgent) and model.backend in {"heuristic", "line", "basic"}:
         action = model.model.select_action(state.env)
@@ -261,6 +276,11 @@ def agent_turn(state: GameState, model) -> None:
     else:
         action = random_legal_action(action_mask, state.rng)
     apply_action(state, action)
+
+
+def simulation_turn(state: GameState, x_model, o_model) -> None:
+    model = x_model if state.env.current_player == 1 else o_model
+    agent_turn(state, model, force_model=True)
 
 
 def draw_text(
@@ -420,9 +440,15 @@ def game_status(state: GameState, model) -> Tuple[str, Tuple[int, int, int]]:
     if state.done:
         if state.winner == 0:
             return "Draw", MUTED
+        if state.simulation:
+            winner_label = state.sim_x_label if state.winner == 1 else state.sim_o_label
+            return f"{winner_label} wins", GREEN
         if state.winner == state.human_player:
             return "You win", GREEN
         return "Agent wins", RED
+    if state.simulation:
+        actor = state.sim_x_label if state.env.current_player == 1 else state.sim_o_label
+        return f"Simulation: {actor}", ORANGE
     if state.env.current_player == state.human_player:
         return f"Your turn ({player_name(state.human_player)})", GREEN
     return f"Agent thinking ({player_name(state.env.current_player)})", ORANGE
@@ -446,28 +472,34 @@ def agent_label(model, use_model: bool) -> str:
 
 def make_buttons(state: GameState, model) -> List[Button]:
     x = PANEL_LEFT + 22
-    y = 250
+    y = 230
     width = 250
-    height = 38
-    gap = 12
+    height = 34
+    gap = 8
     return [
         Button(pygame.Rect(x, y, width, height), "New game", "new"),
         Button(
             pygame.Rect(x, y + (height + gap), width, height),
             f"Play as {player_name(state.human_player)}",
             "switch_side",
+            enabled=not state.simulation,
         ),
         Button(
             pygame.Rect(x, y + 2 * (height + gap), width, height),
             f"Agent: {agent_label(model, state.use_model)}",
             "toggle_model",
-            enabled=model is not None,
+            enabled=model is not None and not state.simulation,
         ),
         Button(
             pygame.Rect(x, y + 3 * (height + gap), width, height),
             f"Policy: {'greedy' if state.deterministic else 'sampling'}",
             "toggle_policy",
-            enabled=model is not None and state.use_model,
+            enabled=(model is not None and state.use_model) or state.simulation,
+        ),
+        Button(
+            pygame.Rect(x, y + 4 * (height + gap), width, height),
+            f"Simulation: {'on' if state.simulation else 'off'}",
+            "toggle_simulation",
         ),
     ]
 
@@ -486,7 +518,9 @@ def draw_panel(
 
     status, color = game_status(state, model)
     draw_text(surface, body_font, status, (PANEL_LEFT + 22, 54), color)
-    if isinstance(model, LoadedAgent) and model.backend in {"heuristic", "line", "basic"} and state.use_model:
+    if state.simulation:
+        model_text = f"X {state.sim_x_label} vs O {state.sim_o_label}"
+    elif isinstance(model, LoadedAgent) and model.backend in {"heuristic", "line", "basic"} and state.use_model:
         model_text = f"{agent_label(model, True)} opponent"
     elif model is not None and state.use_model:
         model_text = "Loaded checkpoint"
@@ -501,17 +535,17 @@ def draw_panel(
         (PANEL_LEFT + 22, 92),
         GREEN if model is not None else ORANGE,
     )
+    if state.simulation:
+        second_line = f"X: {state.sim_x_label}"
+        third_line = f"O: {state.sim_o_label}"
+    else:
+        second_line = f"Human: {player_name(state.human_player)}"
+        third_line = f"Current: {player_name(state.env.current_player)}"
+    draw_text(surface, small_font, second_line, (PANEL_LEFT + 22, 126), TEXT)
     draw_text(
         surface,
         small_font,
-        f"Human: {player_name(state.human_player)}",
-        (PANEL_LEFT + 22, 126),
-        TEXT,
-    )
-    draw_text(
-        surface,
-        small_font,
-        f"Current: {player_name(state.env.current_player)}",
+        third_line,
         (PANEL_LEFT + 22, 154),
         TEXT,
     )
@@ -533,7 +567,7 @@ def draw_panel(
     else:
         draw_text(surface, small_font, "No moves yet.", (PANEL_LEFT + 22, 508), MUTED)
 
-    draw_text(surface, mono_font, "N new  S side  G greedy", (PANEL_LEFT + 22, 636), MUTED)
+    draw_text(surface, mono_font, "N new  S side  G greedy  A sim", (PANEL_LEFT + 22, 636), MUTED)
     return buttons
 
 
@@ -561,10 +595,12 @@ def handle_button(state: GameState, button: Button) -> None:
         state.use_model = not state.use_model
     elif button.action == "toggle_policy":
         state.deterministic = not state.deterministic
+    elif button.action == "toggle_simulation":
+        state.simulation = not state.simulation
 
 
 def handle_board_click(state: GameState, pos: Tuple[int, int]) -> None:
-    if state.done or state.env.current_player != state.human_player:
+    if state.simulation or state.done or state.env.current_player != state.human_player:
         return
     coord = coord_from_point(pos)
     if coord is None or not state.env.board.is_empty(coord):
@@ -586,6 +622,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--human-player", choices=["X", "O"], default="X")
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--placement-mode", choices=["stochastic", "deterministic"], default="stochastic")
+    parser.add_argument("--simulate", action="store_true")
+    parser.add_argument(
+        "--sim-x",
+        choices=["model", "heuristic", "line", "basic", "random"],
+        default="heuristic",
+    )
+    parser.add_argument(
+        "--sim-o",
+        choices=["model", "heuristic", "line", "basic", "random"],
+        default="model",
+    )
+    parser.add_argument("--sim-x-model-path", type=str, default=str(DEFAULT_MODEL_PATH))
+    parser.add_argument("--sim-o-model-path", type=str, default=str(DEFAULT_MODEL_PATH))
+    parser.add_argument("--simulation-delay-ms", type=int, default=260)
     parser.add_argument("--random-agent", action="store_true")
     parser.add_argument("--sampling-agent", action="store_true")
     return parser.parse_args()
@@ -607,26 +658,24 @@ def main() -> None:
 
     model = None
     agent_kind = "random" if args.random_agent else args.agent
-    if agent_kind == "heuristic":
-        model = LoadedAgent("heuristic", HeuristicAgent(seed=args.seed), None)
-    elif agent_kind == "line":
-        model = LoadedAgent("line", LineBuilderAgent(seed=args.seed), None)
-    elif agent_kind == "basic":
-        model = LoadedAgent("basic", BasicHeuristicAgent(seed=args.seed), None)
-    elif agent_kind == "model":
-        model = load_agent(args.model_path, args.hidden_size, args.device)
+    model = build_agent(agent_kind, args.model_path, args.hidden_size, args.device, args.seed)
+    sim_x_model = build_agent(args.sim_x, args.sim_x_model_path, args.hidden_size, args.device, args.seed + 100)
+    sim_o_model = build_agent(args.sim_o, args.sim_o_model_path, args.hidden_size, args.device, args.seed + 200)
     state = GameState(
-        env=SuperTicTacToeEnv(seed=args.seed),
+        env=SuperTicTacToeEnv(seed=args.seed, placement_mode=args.placement_mode),
         human_player=1 if args.human_player == "X" else -1,
         deterministic=not args.sampling_agent,
         use_model=model is not None and agent_kind != "random",
+        simulation=bool(args.simulate),
+        sim_x_label=agent_label(sim_x_model, args.sim_x != "random"),
+        sim_o_label=agent_label(sim_o_model, args.sim_o != "random"),
         rng=np.random.default_rng(args.seed),
     )
     state.env.reset(seed=args.seed)
 
     running = True
     buttons: List[Button] = []
-    agent_delay_ms = 220
+    agent_delay_ms = max(10, int(args.simulation_delay_ms if args.simulate else 220))
     next_agent_time = pygame.time.get_ticks() + agent_delay_ms
 
     while running:
@@ -640,10 +689,13 @@ def main() -> None:
                 elif event.key == pygame.K_n:
                     reset_state(state)
                 elif event.key == pygame.K_s:
-                    state.human_player *= -1
-                    reset_state(state)
+                    if not state.simulation:
+                        state.human_player *= -1
+                        reset_state(state)
                 elif event.key == pygame.K_g and model is not None and state.use_model:
                     state.deterministic = not state.deterministic
+                elif event.key == pygame.K_a:
+                    state.simulation = not state.simulation
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 clicked_button = next(
                     (button for button in buttons if button.enabled and button.rect.collidepoint(event.pos)),
@@ -655,12 +707,11 @@ def main() -> None:
                     handle_board_click(state, event.pos)
                 next_agent_time = pygame.time.get_ticks() + agent_delay_ms
 
-        if (
-            not state.done
-            and state.env.current_player != state.human_player
-            and pygame.time.get_ticks() >= next_agent_time
-        ):
-            agent_turn(state, model)
+        if not state.done and pygame.time.get_ticks() >= next_agent_time:
+            if state.simulation:
+                simulation_turn(state, sim_x_model, sim_o_model)
+            elif state.env.current_player != state.human_player:
+                agent_turn(state, model)
             next_agent_time = pygame.time.get_ticks() + agent_delay_ms
 
         buttons = draw_screen(surface, state, model, fonts, mouse_pos)

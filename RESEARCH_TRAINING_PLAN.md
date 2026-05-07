@@ -39,8 +39,8 @@ The remote server completed the previous neural run quickly enough that the
 second-stage PPO experiment is set much larger:
 
 - behavior cloning: 200,000 teacher positions, 8 epochs;
-- stochastic PPO/TorchRL: 48,000 episodes;
-- deterministic-placement PPO/TorchRL: 48,000 episodes;
+- stochastic PPO/TorchRL: 72,000 episodes;
+- deterministic-placement PPO/TorchRL: 72,000 episodes;
 - optional DQN baseline: 18,000 episodes;
 - optional Q-learning baseline: 20,000 episodes.
 
@@ -56,6 +56,27 @@ stochastic game.
 
 ## Main Command
 
+Before the long run, use this smoke test. It should finish quickly and verifies
+behavior cloning, stochastic PPO, deterministic PPO, checkpoint writing, and the
+TorchRL wrapper:
+
+```bash
+python run_remote_training.py \
+  --neural-backend torchrl \
+  --gpus 0,1 \
+  --output-dir runs/smoke_research_bc_ppo \
+  --only behavior_clone,ppo,ppo_deterministic \
+  --enable-behavior-clone \
+  --include-deterministic-ppo \
+  --bc-samples 2000 \
+  --bc-epochs 1 \
+  --ppo-episodes 20 \
+  --deterministic-ppo-episodes 20 \
+  --ppo-batch-episodes 4 \
+  --save-interval 10 \
+  --log-interval 5
+```
+
 Use this command when the goal is to spend the overnight budget on the most
 promising agents:
 
@@ -63,14 +84,14 @@ promising agents:
 python run_remote_training.py \
   --neural-backend torchrl \
   --gpus 0,1 \
-  --output-dir runs/research_bc_ppo_48k \
+  --output-dir runs/research_bc_ppo_72k \
   --only behavior_clone,ppo,ppo_deterministic \
   --enable-behavior-clone \
   --include-deterministic-ppo \
   --bc-samples 200000 \
   --bc-epochs 8 \
-  --ppo-episodes 48000 \
-  --deterministic-ppo-episodes 48000 \
+  --ppo-episodes 72000 \
+  --deterministic-ppo-episodes 72000 \
   --ppo-batch-episodes 32 \
   --save-interval 2000 \
   --log-interval 500 \
@@ -129,12 +150,12 @@ After the PPO jobs finish:
 
 ```bash
 python benchmark_checkpoints.py \
-  runs/research_bc_ppo_48k/ppo_seed0/checkpoints \
-  runs/research_bc_ppo_48k/ppo_deterministic_seed0/checkpoints \
+  runs/research_bc_ppo_72k/ppo_seed0/checkpoints \
+  runs/research_bc_ppo_72k/ppo_deterministic_seed0/checkpoints \
   --games 200 \
   --device cpu \
   --deterministic \
-  --output-csv runs/research_bc_ppo_48k/checkpoint_benchmark.csv
+  --output-csv runs/research_bc_ppo_72k/checkpoint_benchmark.csv
 ```
 
 The strongest model is the checkpoint with the highest `agent_win_rate` against
