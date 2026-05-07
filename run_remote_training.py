@@ -269,6 +269,8 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 str(args.ppo_minibatch_size),
                 "--lr",
                 str(args.ppo_lr),
+                "--entropy-coef",
+                str(args.ppo_entropy_coef),
                 *ppo_opponent_args,
                 *ppo_extra_args,
                 "--device",
@@ -336,6 +338,8 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                     str(args.ppo_minibatch_size),
                     "--lr",
                     str(args.ppo_lr),
+                    "--entropy-coef",
+                    str(args.ppo_entropy_coef),
                     *ppo_det_extra_args,
                     "--device",
                     args.neural_device,
@@ -471,6 +475,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ppo-update-epochs", type=int, default=4)
     parser.add_argument("--ppo-minibatch-size", type=int, default=1024)
     parser.add_argument("--ppo-lr", type=float, default=2.0e-4)
+    parser.add_argument("--ppo-entropy-coef", type=float, default=0.01)
     parser.add_argument("--ppo-init-checkpoint", type=str, default="")
     parser.add_argument("--enable-behavior-clone", action="store_true")
     parser.add_argument("--bc-samples", type=int, default=200000)

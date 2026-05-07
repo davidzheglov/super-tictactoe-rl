@@ -33,7 +33,9 @@ if [[ -z "$line" ]]; then
   exit 2
 fi
 
-IFS=$'\t' read -r name algo seed episodes opponent player_mode mixed_self mixed_heuristic mixed_line mixed_basic mixed_random batch_or_size lr hidden_size save_interval log_interval shaping_scale shaping_clip shaping_defense_weight forfeit_penalty stop_after_seconds <<< "$line"
+IFS=$'\t' read -r name algo seed episodes opponent player_mode mixed_self mixed_heuristic mixed_line mixed_basic mixed_random batch_or_size lr hidden_size save_interval log_interval shaping_scale shaping_clip shaping_defense_weight forfeit_penalty entropy_coef stop_after_seconds <<< "$line"
+entropy_coef="${entropy_coef:-0.01}"
+stop_after_seconds="${stop_after_seconds:-0}"
 
 out_dir="$RUN_ROOT/$SWEEP_NAME/$name"
 mkdir -p "$out_dir"
@@ -66,6 +68,7 @@ if [[ "$algo" == "ppo" ]]; then
     --update-epochs 4 \
     --minibatch-size 1024 \
     --lr "$lr" \
+    --entropy-coef "$entropy_coef" \
     --hidden-size "$hidden_size" \
     --opponent "$opponent" \
     --agent-player-mode "$player_mode" \

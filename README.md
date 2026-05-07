@@ -158,7 +158,7 @@ python app.py \
   --simulate \
   --sim-x heuristic \
   --sim-o model \
-  --sim-o-model-path runs/research_bc_ppo_72k/ppo_seed0/super_ttt_agent_torchrl.pt \
+  --sim-o-model-path runs/research_bc_ppo_300k/ppo_seed0/super_ttt_agent_torchrl.pt \
   --device cpu
 ```
 

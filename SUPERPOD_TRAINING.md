@@ -26,6 +26,23 @@ The default neural table is intentionally short. After the first sweep finishes,
 copy rows in `superpod/experiments_neural.tsv` to add seeds or longer budgets
 only if the benchmark curves justify it.
 
+## Friend Script Pattern
+
+The ignored `tic-tac-toe/` reference folder uses ordinary Slurm batch scripts:
+
+- login/copy target: `jtangbx@superpod.ust.hk`;
+- Slurm project account in the scripts: `mscbdtsuperpod`;
+- GPU partition: `normal`;
+- PPO jobs: `--gpus-per-node=2`, `--time=12:00:00` to `24:00:00`;
+- setup style: activate an environment, print `nvidia-smi`, then run training;
+- reference PPO scale: `--updates 3000 --episodes 512`, meaning
+  `1,536,000` rollout games.
+
+For our project, the matching SuperPOD script is
+`superpod/research_friend_scale.sbatch`. By default it runs the friend-scale
+budget on both PPO variants. You can override it down to `300000` games with
+environment variables at submission time.
+
 ## Documentation Checked
 
 HKUST's SuperPOD page says jobs must be run through SLURM, and the current quick
@@ -55,21 +72,62 @@ From this local project folder:
 ```bash
 cd /path/to/super_tictactoe_rl
 bash make_superpod_bundle.sh
-scp /tmp/super_ttt_superpod_bundle.tar.gz <your_itsc_username>@superpod.ust.hk:~/
+scp /tmp/super_ttt_superpod_bundle.tar.gz jtangbx@superpod.ust.hk:~/
 ```
 
 On SuperPOD:
 
 ```bash
-ssh <your_itsc_username>@superpod.ust.hk
-mkdir -p ~/super_tictactoe_rl
-tar -xzf ~/super_ttt_superpod_bundle.tar.gz -C ~/super_tictactoe_rl --strip-components=1
-cd ~/super_tictactoe_rl
+ssh jtangbx@superpod.ust.hk
+mkdir -p ~/super-tictactoe-rl
+tar -xzf ~/super_ttt_superpod_bundle.tar.gz -C ~/super-tictactoe-rl --strip-components=1
+cd ~/super-tictactoe-rl
+```
+
+Build the Python environment on a compute/GPU node, following the same pattern
+your friend used in `tic-tac-toe/job.sh`:
+
+```bash
+srun --account=mscbdtsuperpod --partition=normal --gpus-per-node=1 --time=00:30:00 --pty bash
+cd ~/super-tictactoe-rl
 bash superpod/setup_superpod.sh
+exit
 ```
 
 If the login node cannot reach PyPI or the PyTorch wheel index, use HKUST's
 recommended module or container workflow and keep the same SLURM scripts.
+
+## Submit Focused PPO Runs
+
+Use this for a SuperPOD run with the same budget scale as the friend scripts:
+
+```bash
+cd ~/super-tictactoe-rl
+export SPOD_ACCOUNT=mscbdtsuperpod
+export RUN_ROOT=$HOME/super_ttt_runs
+sbatch \
+  --account "$SPOD_ACCOUNT" \
+  --partition normal \
+  --export "ALL,RUN_ROOT=$RUN_ROOT,SWEEP_NAME=research_friend_scale_1536k" \
+  superpod/research_friend_scale.sbatch
+```
+
+Use this for the smaller `300000`-game version:
+
+```bash
+cd ~/super-tictactoe-rl
+export SPOD_ACCOUNT=mscbdtsuperpod
+export RUN_ROOT=$HOME/super_ttt_runs
+sbatch \
+  --account "$SPOD_ACCOUNT" \
+  --partition normal \
+  --export "ALL,RUN_ROOT=$RUN_ROOT,SWEEP_NAME=research_superpod_300k,PPO_EPISODES=300000,DET_PPO_EPISODES=300000" \
+  superpod/research_friend_scale.sbatch
+```
+
+Both commands request 2 GPUs in the Slurm script. The runner first performs
+behavior cloning, then trains stochastic PPO on one GPU and deterministic PPO on
+the other GPU. Both use PPO entropy coefficient `0.05`.
 
 ## Submit the Full Sweep
 
@@ -101,6 +159,7 @@ https://itso.hkust.edu.hk/services/academic-teaching-support/high-performance-co
 
 ```bash
 squeue -u $USER
+tail -f slurm_logs/superttt_friend_*.out
 tail -f slurm_logs/superttt_neural_*.out
 tail -f slurm_logs/superttt_q_*.out
 sacct -j <job_id> --format=JobID,JobName,State,Elapsed,AllocTRES%60
