@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Submit with:
-#   sbatch --account "$SPOD_ACCOUNT" --partition normal superpod/research_friend_scale.sbatch
+#   sbatch --account "$SPOD_ACCOUNT" --partition normal superpod/research_reference_scale.sbatch
 #
 # The default PPO budget mirrors the reference folder's long PPO scale:
 # 3000 updates * 512 games/update = 1,536,000 games per PPO variant.
@@ -8,8 +8,8 @@
 # Example:
 #   sbatch --account "$SPOD_ACCOUNT" --partition normal \
 #     --export "ALL,PPO_EPISODES=300000,DET_PPO_EPISODES=300000" \
-#     superpod/research_friend_scale.sbatch
-#SBATCH --job-name=superttt_friend
+#     superpod/research_reference_scale.sbatch
+#SBATCH --job-name=superttt_reference
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=2
@@ -26,7 +26,7 @@ mkdir -p slurm_logs
 
 VENV_DIR="${VENV_DIR:-.venv-superpod}"
 RUN_ROOT="${RUN_ROOT:-$HOME/super_ttt_runs}"
-SWEEP_NAME="${SWEEP_NAME:-research_friend_scale_${SLURM_JOB_ID:-manual}}"
+SWEEP_NAME="${SWEEP_NAME:-research_reference_scale_${SLURM_JOB_ID:-manual}}"
 PPO_EPISODES="${PPO_EPISODES:-1536000}"
 DET_PPO_EPISODES="${DET_PPO_EPISODES:-1536000}"
 BC_SAMPLES="${BC_SAMPLES:-200000}"
@@ -68,6 +68,7 @@ python run_remote_training.py \
   --ppo-episodes "$PPO_EPISODES" \
   --deterministic-ppo-episodes "$DET_PPO_EPISODES" \
   --ppo-batch-episodes 512 \
+  --ppo-rollout-mode vectorized \
   --ppo-update-epochs 4 \
   --ppo-lr 0.0003 \
   --ppo-entropy-coef 0.05 \

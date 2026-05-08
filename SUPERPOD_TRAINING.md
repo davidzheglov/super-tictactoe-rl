@@ -9,10 +9,10 @@ line-builder baselines.
 
 ## Why This Plan
 
-Your friend's point is important: in a stochastic game, more episodes do not
-automatically mean a better policy. More data reduces variance, but self-play
-can also shift the training distribution, become conservative, or forget useful
-lines. That is why this sweep includes:
+The reference solution's point is important: in a stochastic game, more episodes
+do not automatically mean a better policy. More data reduces variance, but
+self-play can also shift the training distribution, become conservative, or
+forget useful lines. That is why this sweep includes:
 
 - short smart-heuristic and line-builder curriculum runs, to test whether the
   agent can beat human rules quickly;
@@ -26,7 +26,7 @@ The default neural table is intentionally short. After the first sweep finishes,
 copy rows in `superpod/experiments_neural.tsv` to add seeds or longer budgets
 only if the benchmark curves justify it.
 
-## Friend Script Pattern
+## Reference Script Pattern
 
 The ignored `tic-tac-toe/` reference folder uses ordinary Slurm batch scripts:
 
@@ -39,7 +39,7 @@ The ignored `tic-tac-toe/` reference folder uses ordinary Slurm batch scripts:
   `1,536,000` rollout games.
 
 For our project, the matching SuperPOD script is
-`superpod/research_friend_scale.sbatch`. By default it runs the friend-scale
+`superpod/research_reference_scale.sbatch`. By default it runs the reference-scale
 budget on both PPO variants. You can override it down to `300000` games with
 environment variables at submission time.
 
@@ -85,7 +85,7 @@ cd ~/super-tictactoe-rl
 ```
 
 Build the Python environment on a compute/GPU node, following the same pattern
-your friend used in `tic-tac-toe/job.sh`:
+used by `tic-tac-toe/job.sh`:
 
 ```bash
 srun --account=mscbdtsuperpod --partition=normal --gpus-per-node=1 --time=00:30:00 --pty bash
@@ -99,7 +99,7 @@ recommended module or container workflow and keep the same SLURM scripts.
 
 ## Submit Focused PPO Runs
 
-Use this for a SuperPOD run with the same budget scale as the friend scripts:
+Use this for a SuperPOD run with the same budget scale as the reference scripts:
 
 ```bash
 cd ~/super-tictactoe-rl
@@ -108,8 +108,8 @@ export RUN_ROOT=$HOME/super_ttt_runs
 sbatch \
   --account "$SPOD_ACCOUNT" \
   --partition normal \
-  --export "ALL,RUN_ROOT=$RUN_ROOT,SWEEP_NAME=research_friend_scale_1536k" \
-  superpod/research_friend_scale.sbatch
+  --export "ALL,RUN_ROOT=$RUN_ROOT,SWEEP_NAME=research_reference_scale_1536k" \
+  superpod/research_reference_scale.sbatch
 ```
 
 Use this for the smaller `300000`-game version:
@@ -122,12 +122,14 @@ sbatch \
   --account "$SPOD_ACCOUNT" \
   --partition normal \
   --export "ALL,RUN_ROOT=$RUN_ROOT,SWEEP_NAME=research_superpod_300k,PPO_EPISODES=300000,DET_PPO_EPISODES=300000" \
-  superpod/research_friend_scale.sbatch
+  superpod/research_reference_scale.sbatch
 ```
 
 Both commands request 2 GPUs in the Slurm script. The runner first performs
 behavior cloning, then trains stochastic PPO on one GPU and deterministic PPO on
-the other GPU. Both use PPO entropy coefficient `0.05`.
+the other GPU. Both use PPO entropy coefficient `0.05` and vectorized rollout
+collection, so each PPO update gathers the whole `--ppo-batch-episodes` batch
+concurrently instead of playing one game to completion before starting the next.
 
 ## Submit the Full Sweep
 
@@ -159,7 +161,7 @@ https://itso.hkust.edu.hk/services/academic-teaching-support/high-performance-co
 
 ```bash
 squeue -u $USER
-tail -f slurm_logs/superttt_friend_*.out
+tail -f slurm_logs/superttt_reference_*.out
 tail -f slurm_logs/superttt_neural_*.out
 tail -f slurm_logs/superttt_q_*.out
 sacct -j <job_id> --format=JobID,JobName,State,Elapsed,AllocTRES%60

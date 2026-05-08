@@ -167,6 +167,199 @@ def run_episode(
     }
 
 
+def collect_episodes_vectorized(
+    num_episodes: int,
+    model: TorchPolicyValueNet,
+    device: torch.device,
+    gamma: float,
+    rng: np.random.Generator,
+    placement_mode: str,
+    episode_start_index: int,
+    agent_player_mode: str,
+    args: argparse.Namespace,
+    random_agent: RandomAgent,
+    heuristic_agent: HeuristicAgent,
+    line_agent: LineBuilderAgent,
+    basic_agent: BasicHeuristicAgent,
+) -> Tuple[List[List[Transition]], List[Dict[str, int]]]:
+    """Collect PPO rollout games with batched policy inference.
+
+    The environment and scripted opponents are still Python objects, but policy
+    turns across active games share a single neural forward pass per timestep.
+    This is the main speedup over collecting one full game at a time.
+    """
+
+    envs = [
+        SuperTicTacToeEnv(
+            seed=int(rng.integers(0, 2**31 - 1)),
+            placement_mode=placement_mode,
+        )
+        for _ in range(num_episodes)
+    ]
+    observations = [
+        reset_with_start_state(
+            env,
+            rng,
+            args.start_state_mode,
+            args.start_state_min_plies,
+            args.start_state_max_plies,
+            random_agent,
+            heuristic_agent,
+            line_agent,
+            basic_agent,
+        )
+        for env in envs
+    ]
+    opponents = [choose_opponent(args, rng) for _ in range(num_episodes)]
+    agent_players = [
+        choose_agent_player(agent_player_mode, episode_start_index + index, rng)
+        for index in range(num_episodes)
+    ]
+    collected: List[List[Transition]] = [[] for _ in range(num_episodes)]
+    stats: List[Dict[str, int]] = [
+        {
+            "winner": 0,
+            "length": 0,
+            "policy_steps": 0,
+            "forfeits": 0,
+            "illegal": 0,
+            "opponent_self": int(opponents[index] == "self"),
+            "opponent_heuristic": int(opponents[index] == "heuristic"),
+            "opponent_line": int(opponents[index] == "line"),
+            "opponent_basic": int(opponents[index] == "basic"),
+            "opponent_random": int(opponents[index] == "random"),
+        }
+        for index in range(num_episodes)
+    ]
+    done_flags = [False for _ in range(num_episodes)]
+    winners = [0 for _ in range(num_episodes)]
+    model.eval()
+
+    while not all(done_flags):
+        active_indices = [index for index, done in enumerate(done_flags) if not done]
+        step_data: Dict[int, Dict[str, object]] = {}
+        policy_indices: List[int] = []
+
+        for index in active_indices:
+            env = envs[index]
+            player = int(env.current_player)
+            opponent = opponents[index]
+            policy_turn = opponent == "self" or player == agent_players[index]
+            action_mask = env.legal_action_mask()
+            potential_before = (
+                board_potential(env.board, player, defense_weight=args.shaping_defense_weight)
+                if policy_turn and args.shaping_scale != 0.0
+                else 0.0
+            )
+            step_data[index] = {
+                "player": player,
+                "policy_turn": policy_turn,
+                "action_mask": action_mask,
+                "potential_before": potential_before,
+            }
+            if policy_turn:
+                policy_indices.append(index)
+
+        if policy_indices:
+            obs_batch = torch.as_tensor(
+                np.asarray([observations[index] for index in policy_indices], dtype=np.float32),
+                dtype=torch.float32,
+                device=device,
+            )
+            mask_batch = torch.as_tensor(
+                np.asarray([step_data[index]["action_mask"] for index in policy_indices], dtype=np.bool_),
+                dtype=torch.bool,
+                device=device,
+            )
+            with torch.no_grad():
+                logits, values = model(obs_batch)
+                masked = mask_logits(logits, mask_batch)
+                dist = Categorical(logits=masked)
+                actions = dist.sample()
+                log_probs = dist.log_prob(actions)
+
+            for batch_index, env_index in enumerate(policy_indices):
+                step_data[env_index]["action"] = int(actions[batch_index].item())
+                step_data[env_index]["log_prob"] = float(log_probs[batch_index].item())
+                step_data[env_index]["value"] = float(values[batch_index].item())
+
+        for index in active_indices:
+            data = step_data[index]
+            if bool(data["policy_turn"]):
+                continue
+            env = envs[index]
+            opponent = opponents[index]
+            if opponent == "heuristic":
+                action = heuristic_agent.select_action(env)
+            elif opponent == "random":
+                action = random_agent.select_action(env)
+            elif opponent == "line":
+                action = line_agent.select_action(env)
+            elif opponent == "basic":
+                action = basic_agent.select_action(env)
+            else:
+                raise ValueError(f"Unknown opponent mode: {opponent}")
+            data["action"] = int(action)
+            data["log_prob"] = 0.0
+            data["value"] = 0.0
+
+        for index in active_indices:
+            env = envs[index]
+            data = step_data[index]
+            action = int(data["action"])
+            next_obs, _, terminated, truncated, info = env.step(action)
+            done = bool(terminated or truncated)
+            winner = int(info["winner"])
+            stats[index]["winner"] = winner
+            stats[index]["length"] += 1
+            stats[index]["forfeits"] += int(bool(info["forfeited"]))
+            stats[index]["illegal"] += int(info["reason"] == "illegal_action")
+
+            if bool(data["policy_turn"]):
+                player = int(data["player"])
+                dense_reward = 0.0
+                if args.shaping_scale != 0.0:
+                    potential_after = board_potential(
+                        env.board,
+                        player,
+                        defense_weight=args.shaping_defense_weight,
+                    )
+                    delta = float(
+                        np.clip(
+                            potential_after - float(data["potential_before"]),
+                            -args.shaping_clip,
+                            args.shaping_clip,
+                        )
+                    )
+                    dense_reward += args.shaping_scale * delta
+                if bool(info.get("forfeited", False)):
+                    dense_reward -= args.forfeit_penalty
+                collected[index].append(
+                    Transition(
+                        obs=observations[index],
+                        action=action,
+                        log_prob=float(data["log_prob"]),
+                        reward=dense_reward,
+                        value=float(data["value"]),
+                        action_mask=np.asarray(data["action_mask"], dtype=np.float32),
+                        player=player,
+                    )
+                )
+                stats[index]["policy_steps"] += 1
+
+            observations[index] = next_obs
+            if done:
+                done_flags[index] = True
+                winners[index] = winner
+
+    for episode, winner in zip(collected, winners):
+        rewards = outcome_rewards(episode, winner, gamma)
+        for transition, reward in zip(episode, rewards):
+            transition.reward += float(reward)
+
+    return collected, stats
+
+
 def choose_agent_player(mode: str, episode_index: int, rng: np.random.Generator) -> int:
     if mode == "x":
         return 1
@@ -259,6 +452,8 @@ def reset_with_start_state(
 
 def batch_from_episodes(episodes: List[List[Transition]]) -> Dict[str, np.ndarray]:
     transitions = [transition for episode in episodes for transition in episode]
+    if not transitions:
+        raise RuntimeError("PPO rollout produced no policy transitions.")
     rewards = np.asarray([transition.reward for transition in transitions], dtype=np.float32)
     values = np.asarray([transition.value for transition in transitions], dtype=np.float32)
     advantages = rewards - values
@@ -434,6 +629,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--hidden-size", type=int, default=256)
     parser.add_argument("--batch-episodes", type=int, default=64)
+    parser.add_argument(
+        "--rollout-mode",
+        type=str,
+        default="vectorized",
+        choices=["vectorized", "sequential"],
+        help="Collect PPO update games concurrently or one game at a time.",
+    )
     parser.add_argument("--update-epochs", type=int, default=4)
     parser.add_argument("--minibatch-size", type=int, default=1024)
     parser.add_argument("--clip-ratio", type=float, default=0.2)
@@ -516,34 +718,51 @@ def main() -> None:
     started_at = time.time()
     while total_episodes < args.episodes:
         episodes_to_collect = min(args.batch_episodes, args.episodes - total_episodes)
-        collected: List[List[Transition]] = []
-        stats = []
-        for local_episode in range(episodes_to_collect):
-            episode_index = total_episodes + local_episode
-            opponent = choose_opponent(args, rng)
-            agent_player = choose_agent_player(args.agent_player_mode, episode_index, rng)
-            episode, episode_stats = run_episode(
-                env,
-                model,
-                device,
-                args.gamma,
-                rng,
-                opponent=opponent,
-                agent_player=agent_player,
+        if args.rollout_mode == "vectorized":
+            collected, stats = collect_episodes_vectorized(
+                num_episodes=episodes_to_collect,
+                model=model,
+                device=device,
+                gamma=args.gamma,
+                rng=rng,
+                placement_mode=args.placement_mode,
+                episode_start_index=total_episodes,
+                agent_player_mode=args.agent_player_mode,
+                args=args,
                 random_agent=random_agent,
                 heuristic_agent=heuristic_agent,
                 line_agent=line_agent,
                 basic_agent=basic_agent,
-                shaping_scale=args.shaping_scale,
-                shaping_clip=args.shaping_clip,
-                shaping_defense_weight=args.shaping_defense_weight,
-                forfeit_penalty=args.forfeit_penalty,
-                start_state_mode=args.start_state_mode,
-                start_state_min_plies=args.start_state_min_plies,
-                start_state_max_plies=args.start_state_max_plies,
             )
-            collected.append(episode)
-            stats.append(episode_stats)
+        else:
+            collected = []
+            stats = []
+            for local_episode in range(episodes_to_collect):
+                episode_index = total_episodes + local_episode
+                opponent = choose_opponent(args, rng)
+                agent_player = choose_agent_player(args.agent_player_mode, episode_index, rng)
+                episode, episode_stats = run_episode(
+                    env,
+                    model,
+                    device,
+                    args.gamma,
+                    rng,
+                    opponent=opponent,
+                    agent_player=agent_player,
+                    random_agent=random_agent,
+                    heuristic_agent=heuristic_agent,
+                    line_agent=line_agent,
+                    basic_agent=basic_agent,
+                    shaping_scale=args.shaping_scale,
+                    shaping_clip=args.shaping_clip,
+                    shaping_defense_weight=args.shaping_defense_weight,
+                    forfeit_penalty=args.forfeit_penalty,
+                    start_state_mode=args.start_state_mode,
+                    start_state_min_plies=args.start_state_min_plies,
+                    start_state_max_plies=args.start_state_max_plies,
+                )
+                collected.append(episode)
+                stats.append(episode_stats)
 
         batch = batch_from_episodes(collected)
         losses = ppo_update(
@@ -585,6 +804,7 @@ def main() -> None:
                 "entropy": losses["entropy"],
                 "device": str(device),
                 "placement_mode": args.placement_mode,
+                "rollout_mode": args.rollout_mode,
                 "start_state_mode": args.start_state_mode,
                 "elapsed_seconds": time.time() - started_at,
             }

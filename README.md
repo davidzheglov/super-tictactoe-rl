@@ -186,7 +186,7 @@ Keyboard shortcuts inside the window:
 - `analyze_training.py`: training and benchmark plots for reports.
 - `REPORT_RESULTS.md`: saved benchmark observations for the report narrative.
 - `RESEARCH_TRAINING_PLAN.md`: the long-run behavior-cloning and PPO curriculum plan.
-- `FRIEND_TICTACTOE_PARAMETERS.md`: training parameters observed in the ignored reference folder.
+- `REFERENCE_TICTACTOE_PARAMETERS.md`: training parameters observed in the ignored reference folder.
 - `evaluate.py`: model evaluation against random play.
 - `app.py`: Pygame human-vs-agent and visible simulation UI.
 - `utils.py`: shared checkpoint, seeding, and device helpers.

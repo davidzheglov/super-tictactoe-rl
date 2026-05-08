@@ -263,6 +263,8 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                 str(args.ppo_episodes),
                 "--batch-episodes",
                 str(args.ppo_batch_episodes),
+                "--rollout-mode",
+                args.ppo_rollout_mode,
                 "--update-epochs",
                 str(args.ppo_update_epochs),
                 "--minibatch-size",
@@ -332,6 +334,8 @@ def make_jobs(args: argparse.Namespace) -> List[Job]:
                     str(args.deterministic_ppo_episodes),
                     "--batch-episodes",
                     str(args.ppo_batch_episodes),
+                    "--rollout-mode",
+                    args.ppo_rollout_mode,
                     "--update-epochs",
                     str(args.ppo_update_epochs),
                     "--minibatch-size",
@@ -472,6 +476,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-interval", type=int, default=250)
     parser.add_argument("--ppo-episodes", type=int, default=6000)
     parser.add_argument("--ppo-batch-episodes", type=int, default=32)
+    parser.add_argument(
+        "--ppo-rollout-mode",
+        type=str,
+        default="vectorized",
+        choices=["vectorized", "sequential"],
+        help="PPO rollout collection mode.",
+    )
     parser.add_argument("--ppo-update-epochs", type=int, default=4)
     parser.add_argument("--ppo-minibatch-size", type=int, default=1024)
     parser.add_argument("--ppo-lr", type=float, default=2.0e-4)

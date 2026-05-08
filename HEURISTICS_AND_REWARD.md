@@ -72,7 +72,7 @@ So the learner gets weak feedback for:
 - reducing opponent threats by blocking;
 - avoiding stochastic forfeits.
 
-This follows the same research logic as your friend's project: use potential
+This follows the same research logic as the reference project: use potential
 growth to make sparse terminal rewards easier to learn from, but keep terminal
 win/loss rewards as the objective. The shaping coefficients are intentionally
 small (`0.03` by default) so the agent does not learn to optimize the heuristic

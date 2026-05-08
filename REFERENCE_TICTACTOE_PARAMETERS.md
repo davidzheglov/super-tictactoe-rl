@@ -1,4 +1,4 @@
-# Friend Tic-Tac-Toe Training Parameters
+# Reference Tic-Tac-Toe Training Parameters
 
 This records the main parameters found in the ignored `tic-tac-toe/` reference
 folder.
