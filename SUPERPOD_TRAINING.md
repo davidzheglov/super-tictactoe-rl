@@ -72,16 +72,16 @@ From this local project folder:
 ```bash
 cd /path/to/super_tictactoe_rl
 bash make_superpod_bundle.sh
-scp /tmp/super_ttt_superpod_bundle.tar.gz jtangbx@superpod.ust.hk:~/
+scp /tmp/sttt2_superpod_bundle.tar.gz jtangbx@superpod.ust.hk:~/
 ```
 
 On SuperPOD:
 
 ```bash
 ssh jtangbx@superpod.ust.hk
-mkdir -p ~/super-tictactoe-rl
-tar -xzf ~/super_ttt_superpod_bundle.tar.gz -C ~/super-tictactoe-rl --strip-components=1
-cd ~/super-tictactoe-rl
+mkdir -p ~/sttt2
+tar -xzf ~/sttt2_superpod_bundle.tar.gz -C ~/sttt2 --strip-components=1
+cd ~/sttt2
 ```
 
 Build the Python environment on a compute/GPU node, following the same pattern
@@ -89,7 +89,7 @@ used by `tic-tac-toe/job.sh`:
 
 ```bash
 srun --account=mscbdtsuperpod --partition=normal --gpus-per-node=1 --time=00:30:00 --pty bash
-cd ~/super-tictactoe-rl
+cd ~/sttt2
 bash superpod/setup_superpod.sh
 exit
 ```
@@ -102,7 +102,7 @@ recommended module or container workflow and keep the same SLURM scripts.
 Use this for a SuperPOD run with the same budget scale as the reference scripts:
 
 ```bash
-cd ~/super-tictactoe-rl
+cd ~/sttt2
 export SPOD_ACCOUNT=mscbdtsuperpod
 export RUN_ROOT=$HOME/super_ttt_runs
 sbatch \
@@ -115,7 +115,7 @@ sbatch \
 Use this for the smaller `300000`-game version:
 
 ```bash
-cd ~/super-tictactoe-rl
+cd ~/sttt2
 export SPOD_ACCOUNT=mscbdtsuperpod
 export RUN_ROOT=$HOME/super_ttt_runs
 sbatch \
@@ -140,7 +140,7 @@ memory because the docs say memory is allocated proportionally:
 https://hkust-hpc-docs.readthedocs.io/latest/kb/slurm/slurm-how-to-submit-and-run-batch-jobs-G75o-i.html
 
 ```bash
-cd ~/super-tictactoe-rl
+cd ~/sttt2
 export SPOD_ACCOUNT=<your_superpod_account>
 export SPOD_PARTITION=normal
 export SPOD_Q_PARTITION=cpu

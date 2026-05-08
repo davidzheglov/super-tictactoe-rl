@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-OUT="${1:-/tmp/super_ttt_superpod_bundle.tar.gz}"
+OUT="${1:-/tmp/sttt2_superpod_bundle.tar.gz}"
 
 tar -czf "$OUT" \
   --exclude=".git" \
@@ -24,3 +24,4 @@ tar -czf "$OUT" \
   "$(basename "$ROOT")"
 
 echo "Wrote $OUT"
+echo "Suggested SuperPOD target: ~/sttt2"
