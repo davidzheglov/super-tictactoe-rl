@@ -1,193 +1,207 @@
-# Super Tic-Tac-Toe RL Agent
+# Super Tic-Tac-Toe RL
 
-This project implements the assignment game, trains a self-play reinforcement
-learning agent, and provides a Pygame UI for playing against the trained agent.
+Reinforcement learning research project training agents to play **Super Tic-Tac-Toe** — a stochastic 3D board game with 6 levels of 4×4 boards arranged as a triangular pyramid. Win by getting 4-in-a-row horizontally, 4-in-a-column spanning multiple levels, or 5-across diagonally. Every move has only a **50% chance** of landing at the intended cell; otherwise it drifts to a random adjacent cell.
 
-## Board Interpretation
+**TorchRL framework is used for the final PPO training** — bonus implementation (1.5× score multiplier, capped at 50%).
 
-The assignment describes a triangular board made of six 4x4 square boards. This
-project stores the board in a NumPy array with shape `(3, 3, 4, 4)` and treats
-only these level positions as playable:
+---
 
-- Level 1: `(0, 0)`
-- Level 2: `(1, 0)`, `(1, 1)`
-- Level 3: `(2, 0)`, `(2, 1)`, `(2, 2)`
-
-Each playable cell has coordinate:
-
-```text
-(level_row, level_col, local_row, local_col)
-```
-
-Actions are flattened from `0` to `95` over the 96 playable cells in level order.
-
-The Pygame UI draws the boards as a pyramid on a 12-by-12 cell canvas:
-
-- Level 1: one 4x4 board centered after four empty cell widths.
-- Level 2: two 4x4 boards under it, offset by two empty cell widths.
-- Level 3: three 4x4 boards across the bottom.
-
-## Winning Rules Implemented
-
-Win detection uses the same centered pyramid coordinates shown in the Pygame UI:
-
-```text
-global_r = level_row * 4 + local_row
-global_c = (2 - level_row) * 2 + level_col * 4 + local_col
-```
-
-- 4 in a horizontal row across the visible pyramid. This can be entirely inside
-  one local 4x4 board.
-- 4 in a vertical column across the visible pyramid, spanning at least two
-  level rows.
-- 5 across a visible pyramid diagonal in direction down-right or down-left.
-
-A complete row inside one 4x4 board is a win. A complete column inside only one
-4x4 board is not counted as a win because the assignment adds the different-level
-condition only to columns.
-
-## Setup
-
-Python 3.9+ works for the PyTorch/TorchRL trainers. The normal install is
-Torch-only and uses TorchRL for the assignment bonus path.
+## Quick Start
 
 ```bash
-cd super_tictactoe_rl
-python -m venv .venv
-source .venv/bin/activate
+pip install -r requirements.txt
+
+# Play against the best trained agent (DetPPO — 300k episodes, 63.5% vs smart heuristic)
+python -m app --model-path runs/super_ttt_agent_torchrl_detppo.pt
+
+# Play against the stochastic PPO variant (mixed-opponent curriculum)
+python -m app --model-path runs/super_ttt_agent_torchrl_ppo.pt
+```
+
+### Controls
+
+| Key / Action | Effect |
+|---|---|
+| Click a cell | Place your piece |
+| `S` | Toggle simulation mode (agent vs agent auto-play) |
+| `R` | Restart game |
+| `Space` | Pause / resume simulation |
+
+---
+
+## Play Against Different Opponents
+
+### Rule-based opponents
+
+```bash
+# Random agent — easiest, useful as sanity check
+python -m app --random-agent
+
+# Basic heuristic — wins immediately, blocks immediate threats, else random
+python -m app --agent basic
+
+# Line-builder — aggressively constructs long lines, minimal defense
+python -m app --agent line
+
+# Smart heuristic — stochastic expected-value scoring across all landing cells
+#   (strongest rule-based opponent; used as primary training target)
+python -m app --agent heuristic
+```
+
+### Trained RL agents (this repo)
+
+```bash
+# DetPPO: 300k episodes, deterministic placement mode, pure heuristic opponent
+#   Win rates: 63.5% vs smart heuristic, 73.5% vs basic
+python -m app --model-path runs/super_ttt_agent_torchrl_detppo.pt
+
+# PPO: 300k episodes, stochastic placement, mixed opponent curriculum
+#   Win rates: ~48% vs smart heuristic (balanced, handles diverse opponents)
+python -m app --model-path runs/super_ttt_agent_torchrl_ppo.pt
+
+# Play as O instead of X (default is X)
+python -m app --model-path runs/super_ttt_agent_torchrl_detppo.pt --human-player O
+
+# Sampling mode: agent draws from policy distribution rather than argmax
+python -m app --model-path runs/super_ttt_agent_torchrl_ppo.pt --sampling-agent
+```
+
+### Teammate's agents (CNN + AlphaZero implementation)
+
+```bash
+cd teammate_implementation
+pip install -r requirements.txt
+
+# Human vs PPO curriculum agent (best overall)
+python -c "from super_tictactoe.gui import run_human_vs_agent; run_human_vs_agent('checkpoints/ppo_curriculum_final.pt')"
+
+# Human vs finetuned PPO (highest win rate vs heuristics)
+python -c "from super_tictactoe.gui import run_human_vs_agent; run_human_vs_agent('checkpoints/ppo_finetuned_final.pt')"
+
+# Human vs AlphaZero (MCTS-guided)
+python -c "from super_tictactoe.gui import run_human_vs_agent; run_human_vs_agent('checkpoints/alphazero_best.pt')"
+```
+
+> Full teammate source: https://github.com/Anson-1/tic-tac-toe
+
+---
+
+## Auto-Play: Agent vs Agent
+
+```bash
+# DetPPO vs smart heuristic (watch the trained agent play)
+python -m app --simulate \
+  --sim-x ppo --sim-x-model-path runs/super_ttt_agent_torchrl_detppo.pt \
+  --sim-o heuristic
+
+# Stochastic PPO vs DetPPO
+python -m app --simulate \
+  --sim-x ppo --sim-x-model-path runs/super_ttt_agent_torchrl_ppo.pt \
+  --sim-o ppo --sim-o-model-path runs/super_ttt_agent_torchrl_detppo.pt
+```
+
+---
+
+## Benchmark Results (200 games/matchup)
+
+| Agent | vs Smart Heuristic | vs Line Builder | vs Basic Heuristic |
+|---|--:|--:|--:|
+| **DetPPO (300k, TorchRL)** | **63.5%** | 41.5% | **73.5%** |
+| PPO (300k, TorchRL) | 37% | — | — |
+| BC pretrain only (0 PPO steps) | 45% | 44% | — |
+| DQN (6k episodes, sparse) | 0% | — | — |
+| PPO (6k episodes, sparse) | 6% | — | — |
+
+The jump from 6% → 45% (sparse PPO → BC pretrain) demonstrates the critical value of behavioral cloning warm-start for sparse-reward board games.
+
+Run benchmarks yourself:
+
+```bash
+python -m benchmark --agents ppo,heuristic,line,basic \
+  --ppo-path runs/super_ttt_agent_torchrl_detppo.pt --deterministic \
+  --games 200 --output-dir runs/benchmarks_detppo
+```
+
+---
+
+## Training Pipeline
+
+### Phase 1 — Baselines (sparse reward)
+
+```bash
+python -m train_qlearning --episodes 15000   # Tabular Q-learning
+python -m train_torch_dqn --episodes 6000    # Deep Q-Network
+python -m train_torch_ppo --episodes 6000    # PPO, no curriculum
+```
+
+**Result:** 6k episodes insufficient for sparse reward. PPO achieves 6%, DQN 0% vs smart heuristic.
+
+### Phase 2 — Full research run (BC + TorchRL PPO, 300k episodes)
+
+Three anti-sparse-reward techniques applied simultaneously:
+1. **Behavioral cloning** warm-start from heuristic demonstrations
+2. **Mixed-opponent curriculum** (65% heuristic, 20% line, 10% self, 5% random)
+3. **Mid-game state starts** (positions sampled 4–18 ply into a game)
+
+```bash
+# Step 1: Behavior cloning
+python -m train_behavior_clone --samples 200000 --epochs 8
+
+# Step 2a: TorchRL stochastic PPO (mixed curriculum)
+python -m train_torch_ppo --episodes 300000 --placement-mode stochastic
+
+# Step 2b: TorchRL deterministic PPO (pure heuristic opponent)
+python -m train_torch_ppo --episodes 300000 --placement-mode deterministic
+```
+
+---
+
+## Generate Analysis Figures
+
+```bash
+python generate_report_figures.py   # Writes figures/ directory (8 plots)
+python -m analyze_training --run-dir runs/research_bc_ppo_300k --output-dir runs/figures/research
+```
+
+---
+
+## Project Structure
+
+```
+super_tictactoe_rl/
+├── board.py                      # Board state, win detection, stochastic placement
+├── env.py                        # Gymnasium-compatible environment
+├── torchrl_env.py                # TorchRL wrapper + action masking  ← BONUS
+├── agents.py                     # All agent types (random, heuristics, RL)
+├── torch_models.py               # Shared policy-value network architecture
+├── train_qlearning.py            # Phase 1: tabular Q-learning
+├── train_torch_dqn.py            # Phase 1: DQN
+├── train_torch_ppo.py            # Phase 2: PPO (vectorized rollout, TorchRL)
+├── train_behavior_clone.py       # Phase 2: BC warm-start
+├── app.py                        # Pygame interactive UI
+├── benchmark.py                  # Head-to-head benchmark runner
+├── evaluate.py                   # Evaluation utilities
+├── analyze_training.py           # Learning curve generation
+├── generate_report_figures.py    # All 8 report figures
+├── runs/
+│   ├── super_ttt_agent_torchrl_ppo.pt     # Best stochastic PPO model
+│   ├── super_ttt_agent_torchrl_detppo.pt  # Best DetPPO model
+│   ├── heur_line_torch/           # Baseline sparse-reward run logs
+│   ├── overnight_mixed_torch/     # Extended run: 75k Q-learning, 8k DQN
+│   └── research_bc_ppo_300k/      # Full BC + 300k PPO research run
+├── figures/                       # Generated report figures (01–08)
+├── teammate_implementation/       # Collaborator's CNN + AlphaZero approach
+├── LITERATURE_REVIEW.md           # Literature review with academic citations
+├── HEURISTICS_AND_REWARD.md       # Heuristic design rationale
+└── research_process/              # Cluster configs, deployment scripts, archive
+```
+
+---
+
+## Dependencies
+
+Python 3.9+, PyTorch 2.x, TorchRL, Pygame 2.x, NumPy, Pandas, Matplotlib.
+
+```bash
 pip install -r requirements.txt
 ```
-
-On the remote Ubuntu GPU server, use `setup_remote_gpu.sh`; it installs a
-CUDA-enabled PyTorch wheel from the official PyTorch CUDA index.
-
-## Run Tests
-
-```bash
-python tests.py
-```
-
-## Train
-
-The recommended bonus-path trainer is TorchRL PPO. The project also keeps a
-plain PyTorch PPO baseline and a PyTorch DQN baseline. All neural trainers use
-legal-action masking and save resumable `.pt` checkpoints. The one-command
-remote runner uses mixed opponent training by default:
-
-- 20% self-play
-- 45% smart heuristic opponent
-- 30% line-builder opponent
-- 5% random opponent
-
-The smart heuristic scores all true winning windows and the stochastic landing
-distribution of each move, so it blocks intersections such as horizontal
-two-in-a-row plus vertical/diagonal threats. The line-builder is the aggressive
-baseline that mostly extends its own longest open line. See
-`HEURISTICS_AND_REWARD.md` for the exact rules and sparse-reward shaping.
-
-```bash
-python train_torchrl_ppo.py --episodes 5000 --lr 3e-4 --device cuda
-python train_torch_dqn.py --episodes 5000 --lr 3e-4 --device cuda
-```
-
-Train directly against the heuristic baseline:
-
-```bash
-python train_torchrl_ppo.py --episodes 5000 --opponent heuristic --device cuda
-python train_torch_dqn.py --episodes 5000 --opponent heuristic --device cuda
-python train_torchrl_ppo.py --episodes 5000 --opponent line --device cuda
-```
-
-Useful faster smoke test:
-
-```bash
-python train_torchrl_ppo.py --episodes 20 --batch-episodes 4 --device cpu
-```
-
-The main PPO checkpoint is saved as:
-
-```text
-models/super_ttt_agent_torchrl.pt
-models/super_ttt_agent_torchrl.pt.json
-```
-
-`train_torchrl_ppo.py` validates the TorchRL action-masked environment wrapper
-before training and labels checkpoints as `torchrl_ppo`.
-
-## Evaluate
-
-```bash
-python evaluate.py --games 100 --deterministic --device cpu
-```
-
-The model alternates between playing X and O against a random legal opponent.
-
-For cross-play benchmarking:
-
-```bash
-python benchmark.py --agents random,basic,line,heuristic --games 100
-python benchmark.py --agents random,basic,line,heuristic,ppo,dqn --games 100 \
-  --ppo-path runs/overnight_torch/ppo_seed0/super_ttt_agent_torchrl.pt \
-  --dqn-path runs/overnight_torch/dqn_seed0/dqn_agent_torch.pt
-```
-
-Plot logs and benchmark outputs:
-
-```bash
-python analyze_training.py --run-dir runs/overnight_torch
-```
-
-## Play in Pygame
-
-```bash
-python app.py
-```
-
-If no trained checkpoint exists, the UI still works and the computer plays
-random legal moves.
-
-Useful options:
-
-```bash
-python app.py --agent heuristic
-python app.py --agent line
-python app.py --human-player O
-python app.py --model-path models/super_ttt_agent_torchrl.pt --sampling-agent
-python app.py --random-agent
-python app.py \
-  --simulate \
-  --sim-x heuristic \
-  --sim-o model \
-  --sim-o-model-path runs/research_bc_ppo_300k/ppo_seed0/super_ttt_agent_torchrl.pt \
-  --device cpu
-```
-
-Keyboard shortcuts inside the window:
-
-- `N`: new game
-- `S`: switch side
-- `G`: toggle greedy/sampling policy
-- `A`: toggle heuristic/model simulation
-- `Esc` or `Q`: quit
-
-## Files
-
-- `board.py`: pure NumPy board, stochastic move resolution, win checks.
-- `env.py`: Gymnasium environment.
-- `torchrl_env.py`: TorchRL/GymWrapper environment with legal-action masks.
-- `torch_models.py`: PyTorch policy/value and DQN networks.
-- `train_torchrl_ppo.py`: TorchRL bonus-path PPO entrypoint.
-- `train_torch_ppo.py`: PyTorch PPO-style self-play training loop.
-- `train_torch_dqn.py`: PyTorch DQN baseline.
-- `train_behavior_clone.py`: heuristic/line-builder imitation warm start for PPO.
-- `agents.py`: random, smart heuristic, line-builder, Q-table, PPO, and DQN agents.
-- `benchmark.py`: pairwise cross-play benchmarks and CSV output.
-- `benchmark_checkpoints.py`: benchmark numbered checkpoints to select the best model.
-- `analyze_training.py`: training and benchmark plots for reports.
-- `REPORT_RESULTS.md`: saved benchmark observations for the report narrative.
-- `RESEARCH_TRAINING_PLAN.md`: the long-run behavior-cloning and PPO curriculum plan.
-- `REFERENCE_TICTACTOE_PARAMETERS.md`: training parameters observed in the ignored reference folder.
-- `evaluate.py`: model evaluation against random play.
-- `app.py`: Pygame human-vs-agent and visible simulation UI.
-- `utils.py`: shared checkpoint, seeding, and device helpers.
-- `tests.py`: unit tests for board rules and environment behavior.

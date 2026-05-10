@@ -1,0 +1,6 @@
+numpy>=1.24
+gymnasium>=0.29
+pygame>=2.5
+grpcio>=1.59,<1.75
+pytest>=7.0
+urllib3<2
