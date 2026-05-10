@@ -7,6 +7,23 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+# ── Detect python binary ──────────────────────────────────────────────────────
+if command -v python3 &>/dev/null; then
+    PY=python3
+elif command -v python &>/dev/null; then
+    PY=python
+else
+    echo "ERROR: neither python3 nor python found in PATH"
+    exit 1
+fi
+echo "Using python: $PY  ($(${PY} --version 2>&1))"
+
+# ── Activate conda/venv if present ───────────────────────────────────────────
+# Uncomment and set the right path if you use a conda env:
+# source ~/miniconda3/etc/profile.d/conda.sh && conda activate sttt
+# Or for a venv:
+# source ~/venv/bin/activate
+
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 DQN_STOCH_DIR="runs/overnight_dqn/dqn_stochastic_${TIMESTAMP}"
 DQN_DET_DIR="runs/overnight_dqn/dqn_deterministic_${TIMESTAMP}"
@@ -24,7 +41,7 @@ echo "  CPU    → Q-learning (75k)   → $QL_DIR"
 echo "============================================================"
 
 # ── GPU 0: DQN stochastic placement, mixed curriculum ────────────────────────
-CUDA_VISIBLE_DEVICES=0 python -m train_torch_dqn \
+CUDA_VISIBLE_DEVICES=0 $PY -m train_torch_dqn \
     --episodes 300000 \
     --placement-mode stochastic \
     --opponent mixed \
@@ -57,8 +74,8 @@ CUDA_VISIBLE_DEVICES=0 python -m train_torch_dqn \
 PID_GPU0=$!
 echo "Started DQN stochastic on GPU 0  (PID $PID_GPU0)"
 
-# ── GPU 1: DQN deterministic placement, vs heuristic only ────────────────────
-CUDA_VISIBLE_DEVICES=1 python -m train_torch_dqn \
+# ── GPU 1: DQN deterministic placement, heuristic-focused curriculum ─────────
+CUDA_VISIBLE_DEVICES=1 $PY -m train_torch_dqn \
     --episodes 300000 \
     --placement-mode deterministic \
     --opponent mixed \
@@ -92,7 +109,7 @@ PID_GPU1=$!
 echo "Started DQN deterministic on GPU 1  (PID $PID_GPU1)"
 
 # ── CPU: Q-learning with snapshots + Q-value stats ───────────────────────────
-python -m train_qlearning \
+$PY -m train_qlearning \
     --episodes 75000 \
     --alpha 0.05 \
     --gamma 0.99 \
@@ -116,7 +133,7 @@ echo "  tail -f $DQN_STOCH_DIR/train.log"
 echo "  tail -f $DQN_DET_DIR/train.log"
 echo "  tail -f $QL_DIR/train.log"
 echo ""
-echo "Waiting for all to complete (or Ctrl-C to detach)..."
+echo "Waiting for all to complete (or Ctrl-C to detach and let them run)..."
 wait $PID_GPU0 && echo "DQN stochastic  DONE" || echo "DQN stochastic  FAILED (exit $?)"
 wait $PID_GPU1 && echo "DQN deterministic DONE" || echo "DQN deterministic FAILED (exit $?)"
 wait $PID_QL   && echo "Q-learning      DONE" || echo "Q-learning      FAILED (exit $?)"
