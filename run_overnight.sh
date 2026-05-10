@@ -18,11 +18,11 @@ else
 fi
 echo "Using python: $PY  ($(${PY} --version 2>&1))"
 
-# ── Activate conda/venv if present ───────────────────────────────────────────
-# Uncomment and set the right path if you use a conda env:
-# source ~/miniconda3/etc/profile.d/conda.sh && conda activate sttt
-# Or for a venv:
-# source ~/venv/bin/activate
+# ── Activate venv if present in repo root ────────────────────────────────────
+if [[ -f "$ROOT/.venv/bin/activate" ]]; then
+    source "$ROOT/.venv/bin/activate"
+    echo "Activated venv: $ROOT/.venv"
+fi
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 DQN_STOCH_DIR="runs/overnight_dqn/dqn_stochastic_${TIMESTAMP}"
