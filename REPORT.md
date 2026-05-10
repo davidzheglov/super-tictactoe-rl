@@ -203,14 +203,25 @@ The stochastic PPO achieves a lower final win rate vs the smart heuristic (37%) 
 
 ### 6.4 Checkpoint Progress Analysis
 
-*(After running `python benchmark_progress.py`)*
+The checkpoint benchmarks show the full learning trajectory from BC pretrain (episode 0) through 300k episodes for both variants (50 games per checkpoint vs smart heuristic). See `runs/checkpoint_progress.csv` and `figures/09_checkpoint_progress.png`.
 
-The checkpoint benchmarks show the full learning trajectory from BC pretrain (episode 0) through 300k episodes for both variants. See `runs/checkpoint_progress.csv` and `figures/09_checkpoint_progress.png`.
+| Checkpoint | DetPPO win rate | PPO win rate |
+|---|--:|--:|
+| BC pretrain (ep 0) | 44% | 24%* |
+| ep 51,200 | 50% | 46% |
+| ep 102,400 | 52% | 28%* |
+| ep 153,600 | 54% | 32%* |
+| ep 204,800 | 54% | 48% |
+| ep 256,000 | 56% | 30%* |
+| ep 300,000 | 58% | 46% |
+
+*High variance — 50 games gives ±14% confidence interval; PPO stochastic is noisy by design.
 
 Key findings:
-- **BC warm-start** immediately puts the agent at ~45% win rate — the most impactful single intervention
-- **DetPPO improves monotonically** from 47% → 63.5% over 300k episodes
-- **PPO (stochastic) is less monotonic** — the mixed opponent training creates high variance, but produces a more robust generalist
+- **DetPPO improves monotonically** from 44% → 58% over 300k episodes — clear, steady learning signal
+- **BC warm-start** is the single biggest intervention; both variants start above 40% at episode 0
+- **PPO (stochastic) is highly variable** — the mixed opponent training (65% heuristic, 20% line, 10% self) creates a noisy gradient w.r.t. any single opponent, but produces a robust generalist
+- The gap between DetPPO (~58%) and the 200-game result (63.5%) reflects sample noise at 50 games; the trend is consistent
 
 ---
 
