@@ -107,7 +107,7 @@ python -m app --simulate \
 | Agent | vs Smart Heuristic | vs Line Builder | vs Basic Heuristic |
 |---|--:|--:|--:|
 | **DetPPO (300k, TorchRL)** | **63.5%** | 41.5% | **73.5%** |
-| PPO (300k, TorchRL) | 37% | — | — |
+| PPO (300k, TorchRL) | 42% | 39% | **60%** |
 | BC pretrain only (0 PPO steps) | 45% | 44% | — |
 | DQN (6k episodes, sparse) | 0% | — | — |
 | PPO (6k episodes, sparse) | 6% | — | — |

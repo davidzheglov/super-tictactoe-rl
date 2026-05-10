@@ -197,7 +197,7 @@ DetPPO converges to low entropy (~0.57 nats) — highly confident, deterministic
 | Agent | vs Smart Heuristic | vs Line Builder | vs Basic Heuristic |
 |---|--:|--:|--:|
 | DetPPO (300k) | **63.5%** | 41.5% | **73.5%** |
-| PPO (300k) | 37% | — | — |
+| PPO (300k) | 42% | 39% | 60% |
 
 The stochastic PPO achieves a lower final win rate vs the smart heuristic (37%) because it is not specialised: its training distribution includes line-builder and self-play opponents. Its advantage is **robustness** — it can handle diverse opponents it has never seen. DetPPO is the stronger specialist.
 
@@ -278,7 +278,7 @@ The teammate's AlphaZero agent (MCTS-guided, 50 simulations per move) achieves 6
 | DQN | 6k | 0% | Sparse reward; insufficient data |
 | PPO (sparse) | 6k | 6% | No curriculum; cold start |
 | **BC pretrain** | 0 PPO | **45%** | Imitation learning warm-start |
-| PPO (mixed, 300k) | 300k | 37% | Robustness over specialisation |
+| PPO (mixed, 300k) | 300k | 42% | Robustness over specialisation |
 | **DetPPO (300k)** | 300k | **63.5%** | Heuristic specialisation |
 
 ### 8.2 Why DetPPO Outperforms Stochastic PPO
@@ -289,15 +289,15 @@ Stochastic PPO maintains higher entropy and faces a heterogeneous training distr
 
 ### 8.3 Heuristic Opponent Ladder
 
-The matchup between fixed agents (from DetPPO benchmark) reveals the heuristic strength ordering:
+The matchup between fixed agents (200 games each) reveals the heuristic strength ordering:
 
 | Matchup | Winner win rate |
 |---|---|
-| Smart heuristic vs Basic | 84.5% |
-| Line-builder vs Basic | 81.5% |
-| Line-builder vs Smart heuristic | 62.5% |
+| Smart heuristic vs Basic | 83% |
+| Line-builder vs Basic | 82.5% |
+| **Line-builder vs Smart heuristic** | **62%** |
 
-Interestingly, **line-builder beats smart heuristic** (62.5%) because it builds very fast 5-diagonal threats that the heuristic's defensive scoring does not adequately weight. This explains why DetPPO (trained vs smart heuristic only) achieves only 41.5% against line-builder.
+Interestingly, **line-builder beats smart heuristic** (62% win rate) because it builds very fast 5-diagonal threats that the heuristic's defensive scoring does not adequately weight. This explains why both PPO variants struggle more against line-builder (39–41.5%) than against smart heuristic (42–63.5%) — despite the smart heuristic being the intended "strongest" opponent. This is a non-obvious finding: the tactical style matters more than overall strength.
 
 ---
 
