@@ -86,6 +86,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-csv", type=str, default=str(root / "models" / "q_learning_log.csv"))
     parser.add_argument("--save-interval", type=int, default=5000)
     parser.add_argument("--log-interval", type=int, default=1000)
+    parser.add_argument("--snapshot-interval", type=int, default=0,
+                        help="Save a numbered Q-table snapshot every N episodes (0 = off)")
+    parser.add_argument("--snapshot-dir", type=str, default="",
+                        help="Directory for numbered Q-table snapshots")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--skip-if-done", action="store_true")
     parser.add_argument("--done-file", type=str, default="")
@@ -174,6 +178,22 @@ def main() -> None:
 
         episode_num = episode + 1
         if episode_num % args.log_interval == 0 or episode_num >= args.episodes:
+            # Compute Q-value statistics across all visited states
+            all_vals = []
+            if q_table:
+                for arr in q_table.values():
+                    nz = arr[arr != 0.0]
+                    if nz.size:
+                        all_vals.append(nz)
+            if all_vals:
+                flat = np.concatenate(all_vals)
+                q_mean = float(np.mean(flat))
+                q_std = float(np.std(flat))
+                q_max = float(np.max(flat))
+                q_nonzero = int(flat.size)
+            else:
+                q_mean = q_std = q_max = float("nan")
+                q_nonzero = 0
             row = {
                 "time_unix": time.time(),
                 "algo": "q_learning",
@@ -184,20 +204,37 @@ def main() -> None:
                 "epsilon": epsilon,
                 "shaping_scale": args.shaping_scale,
                 "states": len(q_table),
+                "q_mean": q_mean,
+                "q_std": q_std,
+                "q_max": q_max,
+                "q_nonzero": q_nonzero,
                 "elapsed_seconds": time.time() - started_at,
             }
             append_csv_row(Path(args.log_csv), row)
             print(
                 f"episodes={episode_num} winner={last_info['winner']} "
-                f"steps={steps} states={len(q_table)} epsilon={epsilon:.3f}"
+                f"steps={steps} states={len(q_table)} epsilon={epsilon:.3f} "
+                f"q_mean={q_mean:.4f} q_max={q_max:.4f}"
             )
 
         if episode_num % args.save_interval == 0 or episode_num >= args.episodes:
             save_q_table(save_path, q_table, episode_num, args.seed)
             print(f"Saved Q-table at episode {episode_num} to {save_path}")
 
+        if (
+            args.snapshot_interval > 0
+            and args.snapshot_dir
+            and episode_num % args.snapshot_interval == 0
+        ):
+            snap_path = Path(args.snapshot_dir) / f"q_table_ep{episode_num:07d}.pkl"
+            save_q_table(snap_path, q_table, episode_num, args.seed)
+            print(f"Snapshot saved: {snap_path}")
+
         if args.stop_after_seconds > 0 and time.time() - started_at >= args.stop_after_seconds:
             save_q_table(save_path, q_table, episode_num, args.seed)
+            if args.snapshot_dir:
+                snap_path = Path(args.snapshot_dir) / f"q_table_ep{episode_num:07d}.pkl"
+                save_q_table(snap_path, q_table, episode_num, args.seed)
             print(f"Stopping early; saved Q-table at episode {episode_num}.")
             return
 

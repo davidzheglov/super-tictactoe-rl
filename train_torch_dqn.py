@@ -230,6 +230,39 @@ def save_numbered_checkpoint(
     save_checkpoint(str(path), online, target, optimizer, episodes, args, extra=extra)
 
 
+def evaluate_win_rate(
+    online: TorchDQN,
+    n_games: int,
+    device: torch.device,
+    placement_mode: str,
+    seed: int,
+) -> Dict[str, float]:
+    """Play n_games vs smart heuristic and line-builder; return win rates."""
+    eval_env = SuperTicTacToeEnv(seed=seed + 9999, placement_mode=placement_mode)
+    eval_rng = np.random.default_rng(seed + 9999)
+    heur = HeuristicAgent(seed=seed + 11)
+    line = LineBuilderAgent(seed=seed + 13)
+    results: Dict[str, float] = {}
+    for opp_name, opp_agent in [("heuristic", heur), ("line", line)]:
+        wins = 0
+        for g in range(n_games):
+            agent_player = 1 if g % 2 == 0 else -1
+            obs, _ = eval_env.reset(seed=int(eval_rng.integers(0, 2**31 - 1)))
+            done = False
+            while not done:
+                if eval_env.current_player == agent_player:
+                    mask = eval_env.legal_action_mask()
+                    action = masked_q_argmax(online, obs, mask, device)
+                else:
+                    action = opp_agent.select_action(eval_env)
+                obs, _, terminated, truncated, info = eval_env.step(action)
+                done = bool(terminated or truncated)
+            if info.get("winner", 0) == agent_player:
+                wins += 1
+        results[opp_name] = wins / n_games
+    return results
+
+
 def parse_args() -> argparse.Namespace:
     root = project_root()
     parser = argparse.ArgumentParser(description="Train PyTorch DQN baseline.")
@@ -286,6 +319,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-dir", type=str, default="")
     parser.add_argument("--save-interval", type=int, default=5000)
     parser.add_argument("--log-interval", type=int, default=1000)
+    parser.add_argument("--eval-interval", type=int, default=5000,
+                        help="Evaluate win rate vs heuristic every N episodes (0 = disable)")
+    parser.add_argument("--eval-games", type=int, default=50,
+                        help="Number of games per win-rate evaluation")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--skip-if-done", action="store_true")
     parser.add_argument("--done-file", type=str, default="")
@@ -473,6 +510,25 @@ def main() -> None:
         episode_num = episode + 1
         if episode_num % args.target_update_episodes == 0:
             target.load_state_dict(online.state_dict())
+
+        # Periodic win-rate evaluation against fixed opponents
+        eval_results: Dict[str, float] = {}
+        do_eval = (
+            args.eval_interval > 0
+            and (episode_num % args.eval_interval == 0 or episode_num >= args.episodes)
+        )
+        if do_eval:
+            online.eval()
+            with torch.no_grad():
+                eval_results = evaluate_win_rate(
+                    online, args.eval_games, device, args.placement_mode, args.seed
+                )
+            online.train()
+            print(
+                f"  eval ep={episode_num}: vs heuristic {eval_results.get('heuristic', 0):.0%}  "
+                f"vs line {eval_results.get('line', 0):.0%}"
+            )
+
         if episode_num % args.log_interval == 0 or episode_num >= args.episodes:
             row = {
                 "time_unix": time.time(),
@@ -481,14 +537,16 @@ def main() -> None:
                 "winner": int(last_info["winner"]),
                 "steps": steps,
                 "forfeits": forfeits,
-                    "epsilon": epsilon,
-                    "opponent": opponent,
-                    "agent_player": agent_player,
-                    "shaping_scale": args.shaping_scale,
-                    "placement_mode": args.placement_mode,
-                    "start_state_mode": args.start_state_mode,
-                    "replay_size": len(replay),
+                "epsilon": epsilon,
+                "opponent": opponent,
+                "agent_player": agent_player,
+                "shaping_scale": args.shaping_scale,
+                "placement_mode": args.placement_mode,
+                "start_state_mode": args.start_state_mode,
+                "replay_size": len(replay),
                 "loss": float(np.mean(losses)) if losses else np.nan,
+                "wr_heuristic": eval_results.get("heuristic", np.nan),
+                "wr_line": eval_results.get("line", np.nan),
                 "device": str(device),
                 "elapsed_seconds": time.time() - started_at,
             }
