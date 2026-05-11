@@ -12,10 +12,12 @@ Reinforcement learning research project training agents to play **Super Tic-Tac-
 pip install -r requirements.txt
 
 # Play against the best trained agent (DetPPO — 300k episodes, 63.5% vs smart heuristic)
-python -m app --model-path runs/super_ttt_agent_torchrl_detppo.pt
+python -m app                                          # uses models/super_ttt_agent_torchrl.pt by default
 
-# Play against the stochastic PPO variant (mixed-opponent curriculum)
-python -m app --model-path runs/super_ttt_agent_torchrl_ppo.pt
+# Or specify a model explicitly:
+python -m app --model-path models/detppo_300k.pt       # DetPPO (best)
+python -m app --model-path models/ppo_300k.pt          # PPO (stochastic curriculum)
+python -m app --model-path models/bc_pretrain.pt       # BC only, no RL (baseline)
 ```
 
 ### Controls
@@ -50,20 +52,29 @@ python -m app --agent heuristic
 
 ### Trained RL agents (this repo)
 
-```bash
-# DetPPO: 300k episodes, deterministic placement mode, pure heuristic opponent
-#   Win rates: 63.5% vs smart heuristic, 73.5% vs basic
-python -m app --model-path runs/super_ttt_agent_torchrl_detppo.pt
+Three models are committed to `models/`:
 
-# PPO: 300k episodes, stochastic placement, mixed opponent curriculum
-#   Win rates: ~48% vs smart heuristic (balanced, handles diverse opponents)
-python -m app --model-path runs/super_ttt_agent_torchrl_ppo.pt
+| File | Description | vs Smart Heuristic |
+|---|---|--:|
+| `models/detppo_300k.pt` | DetPPO — deterministic placement, 300k episodes | **63.5%** |
+| `models/ppo_300k.pt` | PPO — stochastic placement, mixed curriculum, 300k episodes | 42% |
+| `models/bc_pretrain.pt` | Behavioral cloning only, no RL | 45% |
+
+```bash
+# DetPPO (best) — wins 63.5% vs smart heuristic, 73.5% vs basic
+python -m app --model-path models/detppo_300k.pt
+
+# PPO (mixed curriculum)
+python -m app --model-path models/ppo_300k.pt
+
+# BC pretrain only (no RL) — interesting baseline to compare
+python -m app --model-path models/bc_pretrain.pt
 
 # Play as O instead of X (default is X)
-python -m app --model-path runs/super_ttt_agent_torchrl_detppo.pt --human-player O
+python -m app --model-path models/detppo_300k.pt --human-player O
 
 # Sampling mode: agent draws from policy distribution rather than argmax
-python -m app --model-path runs/super_ttt_agent_torchrl_ppo.pt --sampling-agent
+python -m app --model-path models/ppo_300k.pt --sampling-agent
 ```
 
 ### Teammate's agents (CNN + AlphaZero implementation)
@@ -91,13 +102,13 @@ python -c "from super_tictactoe.gui import run_human_vs_agent; run_human_vs_agen
 ```bash
 # DetPPO vs smart heuristic (watch the trained agent play)
 python -m app --simulate \
-  --sim-x ppo --sim-x-model-path runs/super_ttt_agent_torchrl_detppo.pt \
+  --sim-x ppo --sim-x-model-path models/detppo_300k.pt \
   --sim-o heuristic
 
 # Stochastic PPO vs DetPPO
 python -m app --simulate \
-  --sim-x ppo --sim-x-model-path runs/super_ttt_agent_torchrl_ppo.pt \
-  --sim-o ppo --sim-o-model-path runs/super_ttt_agent_torchrl_detppo.pt
+  --sim-x ppo --sim-x-model-path models/ppo_300k.pt \
+  --sim-o ppo --sim-o-model-path models/detppo_300k.pt
 ```
 
 ---
@@ -118,7 +129,7 @@ Run benchmarks yourself:
 
 ```bash
 python -m benchmark --agents ppo,heuristic,line,basic \
-  --ppo-path runs/super_ttt_agent_torchrl_detppo.pt --deterministic \
+  --ppo-path models/detppo_300k.pt --deterministic \
   --games 200 --output-dir runs/benchmarks_detppo
 ```
 
@@ -159,7 +170,7 @@ python -m train_torch_ppo --episodes 300000 --placement-mode deterministic
 ## Generate Analysis Figures
 
 ```bash
-python generate_report_figures.py   # Writes figures/ directory (8 plots)
+python generate_report_figures.py   # Writes figures/ directory (11 plots)
 python -m analyze_training --run-dir runs/research_bc_ppo_300k --output-dir runs/figures/research
 ```
 
@@ -182,18 +193,17 @@ super_tictactoe_rl/
 ├── benchmark.py                  # Head-to-head benchmark runner
 ├── evaluate.py                   # Evaluation utilities
 ├── analyze_training.py           # Learning curve generation
-├── generate_report_figures.py    # All 8 report figures
-├── runs/
-│   ├── super_ttt_agent_torchrl_ppo.pt     # Best stochastic PPO model
-│   ├── super_ttt_agent_torchrl_detppo.pt  # Best DetPPO model
-│   ├── heur_line_torch/           # Baseline sparse-reward run logs
-│   ├── overnight_mixed_torch/     # Extended run: 75k Q-learning, 8k DQN
-│   └── research_bc_ppo_300k/      # Full BC + 300k PPO research run
-├── figures/                       # Generated report figures (01–08)
-├── teammate_implementation/       # Collaborator's CNN + AlphaZero approach
-├── LITERATURE_REVIEW.md           # Literature review with academic citations
-├── HEURISTICS_AND_REWARD.md       # Heuristic design rationale
-└── research_process/              # Cluster configs, deployment scripts, archive
+├── generate_report_figures.py    # All report figures (01, 03–13)
+├── models/
+│   ├── super_ttt_agent_torchrl.pt  # Default model (DetPPO, used by `python -m app`)
+│   ├── detppo_300k.pt              # DetPPO — 300k episodes, 63.5% vs heuristic
+│   ├── ppo_300k.pt                 # PPO — mixed curriculum, 42% vs heuristic
+│   └── bc_pretrain.pt              # BC pretrain only, no RL, 45% vs heuristic
+├── figures/                        # All generated report figures (PNG)
+├── teammate_implementation/        # Collaborator's CNN + AlphaZero approach
+├── LITERATURE_REVIEW.md            # Literature review with academic citations
+├── HEURISTICS_AND_REWARD.md        # Heuristic design rationale
+└── research_process/               # Cluster configs, deployment scripts, archive
 ```
 
 ---

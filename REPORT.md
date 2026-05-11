@@ -425,7 +425,7 @@ The BC pretrain step and the full 300k research run were both executed through t
 
 ---
 
-## 12. Conclusion
+## 12. Discussion and Conclusion
 
 ### 12.1 Summary of Results
 
@@ -438,6 +438,28 @@ The BC pretrain step and the full 300k research run were both executed through t
 | **BC pretrain** | 0 PPO | **45%** | Imitation learning warm-start — biggest single gain |
 | PPO (mixed, 300k) | 300k | 42% | Robust generalist; diverse opponent curriculum |
 | **DetPPO (300k)** | 300k | **63.5%** | Deterministic training; focused heuristic specialisation |
+
+### 12.2 Discussion
+
+**The central lesson: sparse reward is the fundamental obstacle.** Every method we tried failed in the same way when reward was sparse — not because the algorithm was wrong, but because the agent received no usable gradient signal. Q-learning explored ~1.1M states in 19k episodes while the true state space is astronomically larger; DQN's loss diverged from ~0.003 to ~70 as the replay buffer filled with uninformative experiences. In both cases, the agent never saw enough wins to know what "winning" looks like. Reward shaping (§8.1) partially addressed this but could not fully compensate for the fundamental credit-assignment problem over 15–50 move games.
+
+**BC warm-start is the single most valuable intervention.** The jump from 6% (sparse PPO, 6k episodes) to 45% (BC pretrain, 0 PPO steps) is larger than any subsequent RL improvement. This is consistent with results from imitation learning literature [10] where bootstrapping from human/heuristic demonstrations dramatically accelerates policy learning in environments with long horizons and delayed rewards. The key insight is that BC does not teach the agent to win — it teaches the agent to play legal, coherent moves efficiently, giving RL a non-trivial starting distribution to improve from.
+
+**Deterministic training is a principled inductive bias, not a hack.** The DetPPO variant (63.5% vs heuristic) substantially outperforms PPO (42%) despite both using identical architectures and training budgets. The difference is environmental: deterministic placement eliminates the noise source that most confounds credit assignment in this game. When stochastic piece placement causes a bad board position, it is ambiguous whether the policy or the placement was responsible for the loss. Removing this ambiguity sharpens the gradient signal and allows the agent to develop a confident, low-entropy policy (H = 0.396 nats vs 2.569 nats for PPO). This is a specific instance of the general principle that reducing environment stochasticity during training — even if the deployed environment is stochastic — can improve the learned policy [9].
+
+**The policy heatmap reveals emergent strategic specialisation.** DetPPO's opening move concentrates ~80% probability on a single cell of Level-2 board B (fig. [13](figures/13_policy_heatmap.png)). This was not explicitly programmed — it emerged from 300k episodes of RL against the heuristic opponent. The value estimate V(s₀) = 0.898 indicates the critic has learned that from this initial position, winning is highly likely against the heuristic. This contrasts with PPO's distributed opening (H = 2.569 nats, V = 0.144), which reflects uncertainty about the opponent's strategy rather than a confident specialised opening. The entropy gap directly quantifies how much more information DetPPO has learned about the correct opening move.
+
+**The non-obvious result: stronger is not always better.** The line-builder heuristic (simpler, focuses only on completing lines) beats the smart heuristic (more complex, evaluates multiple objectives) in direct play (§9). This holds for our agents too: DetPPO achieves 41.5% vs line-builder but 63.5% vs smart heuristic, revealing that strategy specialisation has a cost. An agent trained primarily against one opponent type may develop exploitable blind spots against qualitatively different opponents. This is the fundamental limitation of narrow curriculum training compared to diverse self-play approaches like AlphaZero [4].
+
+**Comparison with the teammate's approach.** Both implementations reached similar conclusions about the necessity of BC warm-start and the importance of opponent curriculum. The teammate's PPO (78% vs counter heuristic) appears stronger in absolute terms, but this comparison is complicated by different opponent difficulty and game mechanics. The teammate's MCTS-AlphaZero implementation demonstrates that planning-based approaches can exceed pure policy learning in board games — a direction for future work. The key architectural difference (shared-backbone actor-critic vs separate policy-value heads) did not produce significantly different results, suggesting the bottleneck is curriculum design rather than network architecture.
+
+### 12.3 Limitations and Future Work
+
+The most significant limitation of the current work is the narrow training distribution. DetPPO achieves 63.5% vs the smart heuristic but only 41.5% vs line-builder — this specialisation gap could be reduced by: (1) self-play with population-based training to expose the agent to diverse strategies; (2) curriculum scheduling that progressively introduces harder opponents rather than mixing all types simultaneously; (3) longer training (the critic loss was still decreasing at ep 300k, suggesting further improvement is possible).
+
+A second limitation is the evaluation metric: 200-game benchmarks have high variance for near-50% win rates. A more robust evaluation protocol (1000+ games, confidence intervals) would better characterise the true strength gap between variants.
+
+Future work could investigate: asymmetric training under stochastic placement (train deterministically, test stochastically); MCTS integration (using the trained value function as a rollout heuristic); and BC warm-start from a stronger teacher (e.g., MCTS-guided self-play rather than handcrafted heuristic demonstrations).
 
 ---
 
