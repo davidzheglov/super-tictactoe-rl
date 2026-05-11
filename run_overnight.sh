@@ -18,6 +18,9 @@ else
 fi
 echo "Using python: $PY  ($(${PY} --version 2>&1))"
 
+# Force Python to flush stdout/stderr immediately (no buffering when redirected to file)
+export PYTHONUNBUFFERED=1
+
 # ── Activate venv if present in repo root ────────────────────────────────────
 if [[ -f "$ROOT/.venv/bin/activate" ]]; then
     source "$ROOT/.venv/bin/activate"
