@@ -9,6 +9,9 @@ Figures produced:
   07_benchmark_final.png          - Final benchmark bar chart (all agents, both opponents)
   08_teammate_checkpoint.png      - Teammate PPO curriculum: win rate over training
   09_teammate_vs_heuristics.png   - Teammate best model vs full heuristic ladder
+  10_dqn_training.png             - DQN overnight loss divergence (no BC warm-start)
+  12_detppo_3panel.png            - DetPPO 3-panel curve: win rate + actor loss + critic loss
+  13_policy_heatmap.png           - Opening move heatmap π(a|s₀) for DetPPO and PPO
 """
 from __future__ import annotations
 
@@ -584,6 +587,242 @@ def fig_teammate_vs_heuristics() -> None:
     savefig(fig, "09_teammate_vs_heuristics.png")
 
 
+# ─── figure 10: DQN overnight loss divergence ─────────────────────────────────
+
+def fig_dqn_training() -> None:
+    dqn_dir = RUNS / "overnight_dqn"
+    if not dqn_dir.exists():
+        print("  skip 10: no overnight_dqn runs")
+        return
+
+    # Pick the latest run for each placement mode
+    def latest_csv(pattern: str) -> pd.DataFrame:
+        paths = sorted(dqn_dir.glob(pattern))
+        for p in reversed(paths):
+            csv = next(p.glob("*.csv"), None)
+            if csv is not None:
+                df = pd.read_csv(csv)
+                df["loss"] = pd.to_numeric(df["loss"], errors="coerce")
+                df["episodes"] = pd.to_numeric(df["episodes"], errors="coerce")
+                return df.dropna(subset=["episodes", "loss"])
+        return pd.DataFrame()
+
+    det_df   = latest_csv("dqn_deterministic_*")
+    stoch_df = latest_csv("dqn_stochastic_*")
+
+    if det_df.empty and stoch_df.empty:
+        print("  skip 10: no DQN logs found")
+        return
+
+    fig, ax = plt.subplots(figsize=(11, 5))
+    if not det_df.empty:
+        ax.semilogy(det_df["episodes"] / 1000, det_df["loss"],
+                    color=PALETTE["detppo"], label="Det DQN (deterministic placement)", **STYLE)
+    if not stoch_df.empty:
+        ax.semilogy(stoch_df["episodes"] / 1000, stoch_df["loss"],
+                    color=PALETTE["ppo"], label="Stoch DQN (stochastic placement)", **STYLE)
+
+    ax.set_xlabel("Training episodes (thousands)")
+    ax.set_ylabel("Huber Loss")
+    ax.set_title(
+        "DQN Loss over Training — Diverges Without BC Warm-Start",
+        fontweight="bold", fontsize=13,
+    )
+    ax.legend()
+    ax.grid(alpha=0.25, which="both")
+    fig.tight_layout()
+    savefig(fig, "10_dqn_training.png")
+
+
+# ─── figure 12: DetPPO 3-panel training curve ─────────────────────────────────
+
+def fig_detppo_3panel() -> None:
+    det_df = load_full_ppo_log(RUNS / "research_bc_ppo_300k/ppo_deterministic_seed0")
+    if det_df.empty:
+        print("  skip 12: no DetPPO log")
+        return
+
+    det_df["batch_win_rate"] = (
+        pd.to_numeric(det_df["x_wins"], errors="coerce")
+        / pd.to_numeric(det_df["batch_episodes"], errors="coerce")
+    )
+    det_df["policy_loss"] = pd.to_numeric(det_df["policy_loss"], errors="coerce")
+    det_df["value_loss"]  = pd.to_numeric(det_df["value_loss"],  errors="coerce")
+
+    # 80-game checkpoint benchmarks vs smart heuristic (from section 8.4 table)
+    ckpt_eps = [0, 51200, 102400, 153600, 204800, 256000, 300000]
+    ckpt_wrs = [0.50, 0.39, 0.42, 0.50, 0.57, 0.50, 0.55]
+
+    w = 10
+    fig, (ax_wr, ax_pol, ax_val) = plt.subplots(3, 1, figsize=(12, 11), sharex=True)
+
+    # Panel 1 — win rate
+    ax_wr.plot(det_df["episodes"] / 1000, smooth(det_df["batch_win_rate"], w),
+               color=PALETTE["detppo"], label="Batch win rate (smoothed)", **STYLE)
+    ax_wr.scatter([e / 1000 for e in ckpt_eps], ckpt_wrs,
+                  color="#FF6D00", zorder=5, s=70,
+                  label="Checkpoint eval vs heuristic (80 games)")
+    ax_wr.axhline(0.5, color="grey", lw=1.2, ls="--", label="50% baseline")
+    ax_wr.set_ylabel("Win rate")
+    ax_wr.yaxis.set_major_formatter(mticker.PercentFormatter(xmax=1))
+    ax_wr.set_title("DetPPO — Full 300k Training Curve  (BC warm-start → PPO)",
+                    fontweight="bold", fontsize=13)
+    ax_wr.legend(loc="lower right", fontsize=9)
+    ax_wr.grid(alpha=0.25)
+    ax_wr.set_ylim(0, 1.0)
+
+    # Panel 2 — actor (policy) loss
+    ax_pol.plot(det_df["episodes"] / 1000, smooth(det_df["policy_loss"], w),
+                color="#E53935", label="Policy (actor) loss", **STYLE)
+    ax_pol.set_ylabel("Policy loss")
+    ax_pol.set_title("Actor (Policy) Loss", fontweight="bold")
+    ax_pol.legend(loc="upper right", fontsize=9)
+    ax_pol.grid(alpha=0.25)
+
+    # Panel 3 — critic (value) loss
+    ax_val.plot(det_df["episodes"] / 1000, smooth(det_df["value_loss"], w),
+                color="#43A047", label="Value (critic) loss", **STYLE)
+    ax_val.set_ylabel("Value loss")
+    ax_val.set_xlabel("Training episodes (thousands)")
+    ax_val.set_title("Critic (Value) Loss", fontweight="bold")
+    ax_val.legend(loc="upper right", fontsize=9)
+    ax_val.grid(alpha=0.25)
+
+    fig.tight_layout(h_pad=2)
+    savefig(fig, "12_detppo_3panel.png")
+
+
+# ─── figure 13: opening move policy heatmap ───────────────────────────────────
+
+def fig_policy_heatmap() -> None:
+    """π(a | s₀) heatmap on empty board for DetPPO and PPO (pyramid layout)."""
+    import torch
+    sys.path.insert(0, str(ROOT))
+    try:
+        from torch_models import TorchPolicyValueNet
+    except ImportError as e:
+        print(f"  skip 13: {e}")
+        return
+
+    def load_model(path: Path):
+        if not path.exists():
+            return None, None
+        payload = torch.load(str(path), map_location="cpu", weights_only=False)
+        hidden = int(payload.get("hidden_size", 256))
+        m = TorchPolicyValueNet(hidden_sizes=(hidden, hidden))
+        m.load_state_dict(payload["model_state_dict"])
+        m.eval()
+        return m, payload
+
+    variants = [
+        ("DetPPO (300k)",
+         RUNS / "research_bc_ppo_300k/ppo_deterministic_seed0/checkpoints/ppo_ep0300000.pt"),
+        ("PPO (300k)",
+         RUNS / "research_bc_ppo_300k/ppo_seed0/checkpoints/ppo_ep0300000.pt"),
+    ]
+    loaded = [(lbl, *load_model(p)) for lbl, p in variants if load_model(p)[0] is not None]
+    if not loaded:
+        print("  skip 13: no checkpoints found")
+        return
+
+    # Rebuild properly (load_model called twice above — fix)
+    loaded = []
+    for lbl, path in variants:
+        m, payload = load_model(path)
+        if m is not None:
+            loaded.append((lbl, m))
+
+    # Empty board: 96 zeros + current_player = +1
+    obs0 = torch.zeros(97)
+    obs0[96] = 1.0
+
+    results = []
+    for lbl, m in loaded:
+        with torch.no_grad():
+            logits, value = m(obs0.unsqueeze(0))
+        probs = torch.softmax(logits[0], dim=0).numpy()
+        H = float(-np.sum(probs * np.log(probs + 1e-10)))
+        V = float(value[0])
+        results.append((lbl, probs, H, V))
+
+    if not results:
+        print("  skip 13: empty results")
+        return
+
+    vmax = max(r[1].max() for r in results)
+
+    # Pyramid GridSpec layout (3 rows × 6 cols per variant):
+    #   level 0 (top):    board 0  →  gs[0, 2:4]
+    #   level 1 (middle): boards 1,2 → gs[1, 1:3], gs[1, 3:5]
+    #   level 2 (bottom): boards 3,4,5 → gs[2, 0:2], gs[2, 2:4], gs[2, 4:6]
+    board_placements = [
+        [(0, slice(2, 4))],
+        [(1, slice(1, 3)), (1, slice(3, 5))],
+        [(2, slice(0, 2)), (2, slice(2, 4)), (2, slice(4, 6))],
+    ]
+    board_names = [["L1"], ["L2-A", "L2-B"], ["L3-A", "L3-B", "L3-C"]]
+    cmap = "YlOrRd"
+
+    n = len(results)
+    fig = plt.figure(figsize=(7 * n + 1, 10))
+
+    # Lay out gridspecs side-by-side with a gap in the middle
+    left_edges  = [0.04 + i * (0.92 / n + 0.04) for i in range(n)]
+    right_edges = [le + 0.88 / n for le in left_edges]
+    gs_list = [
+        fig.add_gridspec(3, 6, left=left_edges[i], right=right_edges[i],
+                         hspace=0.55, wspace=0.25)
+        for i in range(n)
+    ]
+
+    axes_by_variant = []
+    for vi, (lbl, probs, H, V) in enumerate(results):
+        gs = gs_list[vi]
+        board_idx = 0
+        first_ax = None
+        for level_i, placements in enumerate(board_placements):
+            for board_j, (row, col_sl) in enumerate(placements):
+                ax = fig.add_subplot(gs[row, col_sl])
+                if first_ax is None:
+                    first_ax = ax
+                bp = probs[board_idx * 16:(board_idx + 1) * 16].reshape(4, 4)
+                ax.imshow(bp, cmap=cmap, vmin=0, vmax=vmax, aspect="equal",
+                          interpolation="nearest")
+                ax.set_xticks([])
+                ax.set_yticks([])
+                ax.set_title(board_names[level_i][board_j], fontsize=8, pad=2)
+                # Highlight highest-probability cell with a blue border
+                mi, mj = np.unravel_index(bp.argmax(), (4, 4))
+                ax.add_patch(plt.Rectangle(
+                    (mj - 0.5, mi - 0.5), 1, 1,
+                    fill=False, edgecolor="#1565C0", lw=2,
+                ))
+                board_idx += 1
+
+        # Variant title above the pyramid (in figure coords)
+        x_center = (left_edges[vi] + right_edges[vi]) / 2
+        fig.text(x_center, 0.95,
+                 f"{lbl}\nH(π) = {H:.3f} nats     V(s₀) = {V:.3f}",
+                 ha="center", va="bottom", fontsize=11, fontweight="bold",
+                 transform=fig.transFigure)
+
+    # Shared horizontal colorbar at the bottom
+    sm = plt.cm.ScalarMappable(
+        cmap=cmap, norm=plt.Normalize(vmin=0, vmax=vmax))
+    sm.set_array([])
+    cb = fig.colorbar(sm, ax=fig.axes, orientation="horizontal",
+                      shrink=0.45, pad=0.04, location="bottom")
+    cb.set_label("π(a | s₀) — opening move probability", fontsize=10)
+    cb.ax.xaxis.set_major_formatter(mticker.PercentFormatter(xmax=1, decimals=1))
+
+    fig.suptitle(
+        "Policy Heatmap — Opening Move Preferences on Empty Board\n"
+        "Each cell = π(a | s₀); blue border = highest-probability cell per board",
+        fontsize=12, fontweight="bold", y=1.01,
+    )
+    savefig(fig, "13_policy_heatmap.png")
+
+
 # ─── main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -591,11 +830,14 @@ def main() -> None:
     fig_qlearning_evolution()
     fig_ppo_full_training()
     fig_ppo_entropy()
+    fig_dqn_training()              # fast (log data only)
     fig_final_benchmark()       # fast (no game running)
     fig_checkpoint_vs_opponents()   # ~700 games, ~5 min CPU
     fig_head2head()                 # ~300 games, ~2 min CPU
     fig_teammate_checkpoint()       # ~420 games, ~5 min CPU
     fig_teammate_vs_heuristics()    # ~300 games, ~3 min CPU
+    fig_detppo_3panel()             # fast (log data only)
+    fig_policy_heatmap()            # fast (single forward pass)
     print("\nDone.")
 
 

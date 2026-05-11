@@ -266,6 +266,8 @@ Fig. [03](figures/03_ppo_full_training.png) shows the full training trajectory f
 - PPO shows more variance due to its mixed opponent pool
 - Loss curves decay steadily for both variants, confirming stable learning
 
+See also fig. [12](figures/12_detppo_3panel.png) for a three-panel breakdown of DetPPO: win rate (with checkpoint eval dots), actor loss, and critic loss — showing the complete picture of policy and value learning in a single view.
+
 **Entropy comparison** (fig. [04](figures/04_ppo_entropy_decay.png)):
 - DetPPO entropy drops from ~3.5 nats to ~0.57 nats — highly confident, deterministic behaviour
 - PPO entropy decreases from ~4.2 to ~1.7 nats — remains exploratory, appropriate for its diverse opponents
@@ -308,6 +310,32 @@ The head-to-head matchups between early and late checkpoints (fig. [06](figures/
 *(Bar chart: fig. [07](figures/07_benchmark_final.png))*
 
 **The gap between BC (45%) and DetPPO (63.5%)** is the value added by 300k RL episodes. PPO (42% vs heuristic) is only slightly below BC pretrain — the mixed curriculum distributes learning across multiple opponents rather than specialising on the smart heuristic.
+
+### 8.6 Training Dynamics in Detail
+
+Fig. [12](figures/12_detppo_3panel.png) shows the DetPPO training curve in the same three-panel format as standard deep RL papers: win rate (top), actor loss (middle), and critic loss (bottom).
+
+**Win rate panel**: The batch win rate (orange: DetPPO trained against the mixed curriculum) stays comfortably above 50% throughout training after the BC warm-start. Orange dots mark the 80-game checkpoint evaluations against the fixed smart heuristic — these drop to 39% at ep 51k (early RL disrupts the BC policy) before recovering to 57% at ep 204k and 55% at ep 300k. The 200-game final benchmark of 63.5% confirms the checkpoint evaluation trend.
+
+**Actor loss panel**: The policy loss remains small and negative throughout (expected for the PPO clipped surrogate, which is maximised), indicating stable policy updates with no catastrophic gradient steps.
+
+**Critic loss panel**: The value loss decreases monotonically from 0.42 to ~0.28, showing the critic steadily improving its value estimates over the 300k episodes. This steady convergence confirms that GAE-based advantage estimation is providing clean learning signal throughout.
+
+### 8.7 Opening-Move Policy Analysis
+
+Fig. [13](figures/13_policy_heatmap.png) visualises π(a | s₀) — the probability distribution over all 96 cells when the board is empty and it is X's turn. The six boards are arranged as the physical pyramid (Level 1 on top, Level 2 in the middle, Level 3 at the bottom).
+
+| Metric | DetPPO | PPO |
+|---|--:|--:|
+| Entropy H(π) at s₀ | **0.396 nats** | 2.569 nats |
+| Value estimate V(s₀) | **0.898** | 0.144 |
+| Top cell probability | ~80% (L2-B, one cell) | ~25% (L2-A, one cell) |
+
+**DetPPO**: extremely low entropy (H = 0.396 nats, compared to max 4.56 nats for uniform over 96 actions). Nearly all opening probability is concentrated on a single cell of Level-2 board B. The value estimate V(s₀) = 0.898 means the critic predicts an 89.8% chance of winning from an empty board — reflecting specialisation toward the heuristic opponent style. This confident, near-deterministic opening is the direct result of deterministic placement training removing placement-noise from credit assignment.
+
+**PPO**: entropy of 2.569 nats (far more distributed). The highest-probability cell reaches only ~25%. Value estimate V(s₀) = 0.144 is more conservative — the mixed-curriculum policy is uncertain about the opening state because it must be competitive against several opponent types simultaneously.
+
+The contrast between H(π) = 0.396 (DetPPO) and H(π) = 2.569 (PPO) is the clearest quantitative signature of policy specialisation. DetPPO's low entropy on the opening move was not explicitly rewarded — it emerged purely from training against a consistent opponent in a consistent (deterministic) environment.
 
 ---
 
@@ -397,7 +425,7 @@ The BC pretrain step and the full 300k research run were both executed through t
 
 ---
 
-## 12. Conclusion and TA Response
+## 12. Conclusion
 
 ### 12.1 Summary of Results
 
@@ -410,18 +438,6 @@ The BC pretrain step and the full 300k research run were both executed through t
 | **BC pretrain** | 0 PPO | **45%** | Imitation learning warm-start — biggest single gain |
 | PPO (mixed, 300k) | 300k | 42% | Robust generalist; diverse opponent curriculum |
 | **DetPPO (300k)** | 300k | **63.5%** | Deterministic training; focused heuristic specialisation |
-
-### 12.2 TA Comment Response
-
-**TA comment:** *"Various experiments and methods tried to tackle the problem, while I am more expect on the analysis of training processes, for example, the evolution of q-value tables, which can have a better demonstration of how your program learns."*
-
-We address this in three ways:
-
-1. **Q-table state coverage growth** (fig. [01](figures/01_qlearning_evolution.png)): States discovered over 75k training episodes alongside ε decay — demonstrating the exploration-to-exploitation transition and why tabular Q-learning cannot scale. The overnight extension (fig. [11](figures/11_qlearning_stats.png)) adds quantitative Q-value statistics: mean Q-value, std, and max over 19k episodes of fresh overnight training, showing that Q-values stay near zero even after hours of training.
-
-2. **Checkpoint-by-checkpoint win rate** (fig. [05](figures/05_checkpoint_vs_opponents.png)): Win rate vs both smart heuristic and line-builder at every saved checkpoint (BC → 51k → 102k → 153k → 204k → 256k → 300k) for both PPO variants. This is the most direct demonstration that the agent genuinely improves over training — shown in the metric that matters (win rate against fixed opponents), not just training loss.
-
-3. **Policy entropy decay** (fig. [04](figures/04_ppo_entropy_decay.png)): The decrease in policy entropy from ~4.2 nats to ~0.57 nats (DetPPO) shows the transition from an uncertain, exploratory policy to a confident, specialised one — the clearest quantitative signature of learning in the neural policy.
 
 ---
 
@@ -461,3 +477,5 @@ We address this in three ways:
 | [09_teammate_vs_heuristics.png](figures/09_teammate_vs_heuristics.png) | Teammate's best model vs full 5-tier heuristic ladder (fresh benchmark) |
 | [10_dqn_training.png](figures/10_dqn_training.png) | DQN overnight run: diverging loss + 0% win rate across 30–54k episodes |
 | [11_qlearning_stats.png](figures/11_qlearning_stats.png) | Q-learning overnight: state coverage, epsilon decay, Q-value evolution (19k episodes) |
+| [12_detppo_3panel.png](figures/12_detppo_3panel.png) | DetPPO 3-panel training curve: win rate + actor loss + critic loss over 300k episodes |
+| [13_policy_heatmap.png](figures/13_policy_heatmap.png) | Opening move policy heatmap π(a\|s₀): DetPPO vs PPO on empty board (pyramid layout) |
