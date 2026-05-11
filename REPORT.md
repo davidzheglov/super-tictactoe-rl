@@ -131,30 +131,49 @@ These properties mirror why AlphaZero uses a policy-gradient approach (via MCTS-
 
 All Phase 1 experiments were run on an NVIDIA A2 GPU server.
 
-### 6.1 Tabular Q-Learning (6k → 75k episodes)
+### 6.1 Tabular Q-Learning (6k → 19k episodes overnight)
 
-**Implementation:** Dictionary-based Q-table mapping board state tuples to 96-element Q-value arrays. ε-greedy policy (ε: 0.9 → 0.05 over training), α = 0.1, γ = 0.99.
+**Implementation:** Dictionary-based Q-table mapping board state tuples to 96-element Q-value arrays. ε-greedy policy (ε: 0.9 → 0.05 over training), α = 0.05, γ = 0.99, potential-based reward shaping (scale 0.03).
 
-**Results (15k episodes):**
+**Overnight run results (19k episodes on CPU, ~12 hours):**
 
-| Metric | Value |
-|---|---|
-| Unique states discovered | 693,853 |
-| Final ε | 0.050 |
-| Training time | ~7.8 hours |
+| Metric | ep 1k | ep 10k | ep 19k |
+|---|---|---|---|
+| States discovered | 62,000 | 597,000 | **1,098,200** |
+| Exploration rate ε | 0.889 | 0.787 | 0.685 |
+| Mean Q-value | 0.00140 | 0.00141 | 0.00142 |
+| Max Q-value | 0.053 | 0.053 | **0.053** |
 
-**Extended run (75k episodes, overnight):**
+The Q-learning evolution (fig. [11](figures/11_qlearning_stats.png)) reveals the core failure mode:
 
-| Metric | Value |
-|---|---|
-| Unique states discovered | **3,280,329** |
-| Coverage of true state space | $< 10^{-38}$% |
+- **States grow but stay negligible**: 1.1M states at 19k episodes covers an infinitesimal fraction of $3^{96}$. Even the previous overnight run at 75k episodes reached only 3.28M — the state space is fundamentally untraversable by tabular methods.
+- **Q-values never propagate**: mean Q-value stays flat at 0.0014 throughout training. The maximum Q-value is stuck at 0.053 — the value of a single shaping reward step — meaning the agent has never discovered a full winning path and bootstrapped its value. The reward signal is not reaching most states.
+- **Epsilon still 0.68 at ep 19k**: with ε decaying from 0.9 to 0.05 over 75k target episodes, the agent is still 68% random at ep 19k. The Q-table is populated almost entirely by random walk exploration, not strategic play.
 
-The Q-table grows roughly linearly with episodes (fig. [01](figures/01_qlearning_evolution.png)) until ε reaches its minimum, at which point exploration plateaus. Even 3.28M discovered states covers a negligible fraction of the true state space, confirming that tabular Q-learning is fundamentally infeasible for this game.
+**Win rate vs smart heuristic: 0%** — a Q-table populated by random walks against strong opponents does not generalise to competitive play.
 
-**Win rate vs smart heuristic: not meaningful** (the Q-table cannot cover the state space required to play a full game reliably at the smart heuristic's level).
+### 6.2 Deep Q-Network — Extended Overnight Run (30k–54k episodes)
 
-### 6.2 Baseline PPO (Sparse Reward, 6k episodes)
+To definitively test whether DQN simply needed more training time, we ran two DQN variants overnight on the two NVIDIA A2 GPUs (CUDA 12.8):
+
+- **Det DQN**: deterministic placement, heuristic-focused curriculum — 54k episodes (~11 hours)
+- **Stoch DQN**: stochastic placement, mixed curriculum — 34k episodes (~10 hours)
+
+**Results (100-game benchmark on final checkpoints):**
+
+| Agent | vs Smart Heuristic | vs Line Builder |
+|---|--:|--:|
+| Det DQN ep 30k | 1% | 1% |
+| Det DQN ep 50k | 1% | 3% |
+| Stoch DQN ep 30k | 1% | 0% |
+
+**The loss diverges rather than converges** (fig. [10](figures/10_dqn_training.png)): Det DQN loss climbs from 0.003 at ep 1k to **28 at ep 50k**; Stoch DQN from 0.001 to **64 at ep 34k**. This is a known pathology — without a stable warm-start, the Bellman targets are near-zero and the Q-network bootstraps from its own inaccurate predictions, amplifying noise rather than reducing it.
+
+**Win rate at every 5k-episode eval: 0% throughout.** The periodic evaluations (50 games vs each opponent every 5k episodes) show zero wins at ep 5k, 10k, 15k, 20k, 25k, 30k, 35k, 40k, 45k, 50k. Even with the correct architecture, replay buffer, and curriculum, DQN cannot learn from a sparse terminal reward signal alone in this game.
+
+**Conclusion:** More episodes do not fix the DQN's fundamental problem. The correct fix is **BC warm-start**, which instantly takes the agent from 0% to 45% (Section 8.1). The DQN overnight run is the controlled experiment proving this.
+
+### 6.3 Baseline PPO (Sparse Reward, 6k episodes)
 
 **Architecture:** Shared policy-value network (97 → 256 → 256 → policy/value heads). PPO clip ε = 0.2, entropy coefficient 0.05, GAE λ = 0.95.
 
@@ -180,7 +199,7 @@ The progression from 6% to 63.5% win rate was not a single design decision — i
 
 **Step 1 — Baseline failures (6k episodes each).** Q-learning, DQN, and sparse PPO all fail, confirming that the sparse reward signal is the core bottleneck. The key insight: we need to inject signal earlier in training.
 
-**Step 2 — Extended overnight runs.** We ran Q-learning to 75k episodes (3.28M states discovered) and DQN to 8k episodes. Neither achieves meaningful win rates — confirming the fundamental limitations of each approach. The overnight Q-learning run is valuable for showing state space dynamics; the DQN run confirmed that more episodes alone don't fix the credit-assignment problem.
+**Step 2 — Extended overnight runs.** To rule out "simply not enough training," we ran DQN overnight on two GPUs (30–54k episodes) and Q-learning on CPU (19k episodes). Results: DQN stays at 0–1% win rate with diverging loss; Q-learning Q-values barely move (mean stays at 0.0014). More episodes alone do not fix the credit-assignment problem. This is the controlled experiment that justifies BC warm-start as the solution.
 
 **Step 3 — Teammate discussion.** The teammate's implementation (CNN + PPO curriculum on a SuperPOD cluster) revealed that their model — also trained with a progressive heuristic curriculum — was achieving meaningful win rates against their medium-strength heuristics after ~3k PPO updates. The key enabler: a strong warm-start and a curriculum that transitions from easy to hard opponents. This pointed us toward behavioural cloning as the warm-start.
 
@@ -384,9 +403,11 @@ The BC pretrain step and the full 300k research run were both executed through t
 
 | Method | Episodes | vs Smart Heuristic | Note |
 |---|---|--:|---|
-| Q-learning | 75k | — | State space infeasible; demonstrates state-space explosion |
-| PPO (sparse) | 6k | 6% | Insufficient data; no curriculum |
-| **BC pretrain** | 0 PPO | **45%** | Imitation learning warm-start (biggest single gain) |
+| Q-learning (overnight) | 19k | 0% | Q-values flat; state space unreachable |
+| DQN stochastic (overnight) | 34k | 1% | Loss diverges; 0% at every 5k eval |
+| DQN deterministic (overnight) | 54k | 1% | Loss diverges; 0% at every 5k eval |
+| PPO sparse (6k) | 6k | 6% | Entropy unchanged; not learning |
+| **BC pretrain** | 0 PPO | **45%** | Imitation learning warm-start — biggest single gain |
 | PPO (mixed, 300k) | 300k | 42% | Robust generalist; diverse opponent curriculum |
 | **DetPPO (300k)** | 300k | **63.5%** | Deterministic training; focused heuristic specialisation |
 
@@ -396,7 +417,7 @@ The BC pretrain step and the full 300k research run were both executed through t
 
 We address this in three ways:
 
-1. **Q-table state coverage growth** (fig. [01](figures/01_qlearning_evolution.png)): The number of unique states discovered over 75k training episodes alongside the ε decay curve — demonstrating the exploration-to-exploitation transition and showing exactly why tabular Q-learning cannot scale to this game.
+1. **Q-table state coverage growth** (fig. [01](figures/01_qlearning_evolution.png)): States discovered over 75k training episodes alongside ε decay — demonstrating the exploration-to-exploitation transition and why tabular Q-learning cannot scale. The overnight extension (fig. [11](figures/11_qlearning_stats.png)) adds quantitative Q-value statistics: mean Q-value, std, and max over 19k episodes of fresh overnight training, showing that Q-values stay near zero even after hours of training.
 
 2. **Checkpoint-by-checkpoint win rate** (fig. [05](figures/05_checkpoint_vs_opponents.png)): Win rate vs both smart heuristic and line-builder at every saved checkpoint (BC → 51k → 102k → 153k → 204k → 256k → 300k) for both PPO variants. This is the most direct demonstration that the agent genuinely improves over training — shown in the metric that matters (win rate against fixed opponents), not just training loss.
 
@@ -438,3 +459,5 @@ We address this in three ways:
 | [07_benchmark_final.png](figures/07_benchmark_final.png) | Final benchmark bar chart: all agents vs all opponents (200 games) |
 | [08_teammate_checkpoint.png](figures/08_teammate_checkpoint.png) | Teammate's PPO curriculum: win rate at each checkpoint (fresh benchmark) |
 | [09_teammate_vs_heuristics.png](figures/09_teammate_vs_heuristics.png) | Teammate's best model vs full 5-tier heuristic ladder (fresh benchmark) |
+| [10_dqn_training.png](figures/10_dqn_training.png) | DQN overnight run: diverging loss + 0% win rate across 30–54k episodes |
+| [11_qlearning_stats.png](figures/11_qlearning_stats.png) | Q-learning overnight: state coverage, epsilon decay, Q-value evolution (19k episodes) |
